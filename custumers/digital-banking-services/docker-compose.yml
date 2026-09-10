@@ -1,15 +1,35 @@
 services:
+  banking-api:
+    build: .
+    container_name: digital-banking-api
+    ports:
+      - "${BANKING_API_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-digital_banking}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-digital_banking}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-digital_banking}
+    networks:
+      - client-banking
+
   postgres:
     image: postgres:16-alpine
     container_name: digital-banking-postgres
     environment:
-      POSTGRES_DB: digital_banking
-      POSTGRES_USER: digital_banking
-      POSTGRES_PASSWORD: digital_banking
+      POSTGRES_DB: ${POSTGRES_DB:-digital_banking}
+      POSTGRES_USER: ${POSTGRES_USER:-digital_banking}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-digital_banking}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - digital-banking-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-digital_banking} -d ${POSTGRES_DB:-digital_banking}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
       - client-banking
 
