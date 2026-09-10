@@ -18,10 +18,13 @@ public class GlobalExceptionHandler {
         error.put("status", HttpStatus.BAD_REQUEST.value());
         error.put("message", "Validation failed");
         error.put("errors", e.getBindingResult().getFieldErrors().stream()
-                .map(fe -> Map.of(
-                        "field", fe.getField(),
-                        "message", fe.getDefaultMessage()
-                ))
+                .map(fe -> {
+                    assert fe.getDefaultMessage() != null;
+                    return Map.of(
+                            "field", fe.getField(),
+                            "message", fe.getDefaultMessage()
+                    );
+                })
                 .toList());
         return ResponseEntity.badRequest().body(error);
     }

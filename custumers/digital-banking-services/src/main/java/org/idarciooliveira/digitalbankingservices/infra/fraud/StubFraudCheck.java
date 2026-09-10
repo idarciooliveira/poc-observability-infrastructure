@@ -5,7 +5,6 @@ import org.idarciooliveira.digitalbankingservices.domain.usecase.FraudCheck;
 import org.idarciooliveira.digitalbankingservices.infra.metrics.TransferMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 
