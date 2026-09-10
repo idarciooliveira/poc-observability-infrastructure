@@ -4,6 +4,9 @@ import org.idarciooliveira.digitalbankingservices.domain.model.Transfer;
 import org.idarciooliveira.digitalbankingservices.domain.repository.TransferRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.Optional;
+import java.util.UUID;
+
 @Repository
 public class TransferRepositoryAdapter implements TransferRepository {
 
@@ -23,5 +26,17 @@ public class TransferRepositoryAdapter implements TransferRepository {
                 transfer.getCreatedAt(),
                 transfer.getStatus());
         jpaRepository.save(entity);
+    }
+
+    @Override
+    public Optional<Transfer> findById(UUID id) {
+        return jpaRepository.findById(id)
+                .map(entity -> new Transfer(
+                        entity.getId(),
+                        entity.getSourceAccountNumber(),
+                        entity.getDestinationAccountNumber(),
+                        entity.getAmount(),
+                        entity.getCreatedAt(),
+                        entity.getStatus()));
     }
 }

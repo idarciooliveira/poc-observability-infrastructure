@@ -47,4 +47,28 @@ public class TransferEntity {
         this.createdAt = createdAt;
         this.status = status;
     }
+
+    public UUID getId() {
+        return id;
+    }
+
+    public String getSourceAccountNumber() {
+        return sourceAccountNumber;
+    }
+
+    public String getDestinationAccountNumber() {
+        return destinationAccountNumber;
+    }
+
+    public BigDecimal getAmount() {
+        return amount;
+    }
+
+    public Instant getCreatedAt() {
+        return createdAt;
+    }
+
+    public TransferStatus getStatus() {
+        return status;
+    }
 }
