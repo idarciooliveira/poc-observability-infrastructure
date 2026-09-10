@@ -26,6 +26,9 @@ services:
       OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-15000}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4317}
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      # Micrometer meters (TransferMetrics: bank.transfers.total, bank.fraud.*)
+      # are NOT bridged into OTLP by default — this opts the agent in.
+      OTEL_INSTRUMENTATION_MICROMETER_ENABLED: "true"
     networks:
       - client-banking
 
