@@ -21,6 +21,10 @@ services:
       # Must match BANKING_TOKEN in the root observability .env.
       OTEL_EXPORTER_OTLP_HEADERS: Authorization=Bearer ${BANKING_TOKEN:-dev-banking-token-local-only}
       OTEL_INSTRUMENTATION_MICROMETER_ENABLED: "true"
+      # Phase 8 fault injection (fraud-service only). 0/0 = off. LATENCY_MS >
+      # 2000 also trips banking-api's 2s fraud-check timeout (timeout demo).
+      CHAOS_LATENCY_MS: ${CHAOS_LATENCY_MS:-0}
+      CHAOS_REJECT_RATE: ${CHAOS_REJECT_RATE:-0}
 
   banking-api:
     build:

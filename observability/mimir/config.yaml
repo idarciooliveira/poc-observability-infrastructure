@@ -51,6 +51,15 @@ store_gateway:
   sharding_ring:
     replication_factor: 1
 
+# Phase 8 fix: the collector promotes resource attributes to metric labels
+# (resource_to_telemetry_conversion), and the Java agent ships ~32 of them
+# (container_*, process_*, host_*, telemetry_*). Above Mimir's default limit
+# of 30 label names per series, which silently dropped the
+# http_server_request_duration_* histograms the latency dashboards need.
+# 64 keeps them; high-cardinality labels are acceptable for this POC.
+limits:
+  max_label_names_per_series: 64
+
 # No anonymous usage reporting from the POC stack.
 usage_stats:
   enabled: false

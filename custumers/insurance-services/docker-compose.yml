@@ -21,6 +21,10 @@ services:
       # Must match INSURANCE_TOKEN in the root observability .env.
       OTEL_EXPORTER_OTLP_HEADERS: Authorization=Bearer ${INSURANCE_TOKEN:-dev-insurance-token-local-only}
       OTEL_INSTRUMENTATION_MICROMETER_ENABLED: "true"
+      # Phase 8 fault injection (risk-service only). 0/0 = off. LATENCY_MS >
+      # 2000 also trips insurance-api's 2s risk-evaluation timeout (timeout demo).
+      CHAOS_LATENCY_MS: ${CHAOS_LATENCY_MS:-0}
+      CHAOS_REJECT_RATE: ${CHAOS_REJECT_RATE:-0}
 
   insurance-api:
     build:
