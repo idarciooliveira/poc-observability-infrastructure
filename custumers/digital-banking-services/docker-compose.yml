@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: digital-banking-postgres
+    environment:
+      POSTGRES_DB: digital_banking
+      POSTGRES_USER: digital_banking
+      POSTGRES_PASSWORD: digital_banking
+    ports:
+      - "5432:5432"
+    volumes:
+      - digital-banking-postgres-data:/var/lib/postgresql/data
+    networks:
+      - client-banking
+
+volumes:
+  digital-banking-postgres-data:
+
+networks:
+  client-banking:
+    name: client-banking
