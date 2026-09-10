@@ -10,10 +10,9 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 
 /**
- * Phase 1 placeholder: always approves. Replaced by a real HTTP call to the
- * separate Fraud Service in Phase 4 (distributed tracing).
+ * Phase 1 placeholder: replaced by HttpFraudCheck - fraud logic now in fraud-service.
+ * Kept as reference/fallback.
  */
-@Component
 public class StubFraudCheck implements FraudCheck {
 
     private static final Logger log = LoggerFactory.getLogger(StubFraudCheck.class);
