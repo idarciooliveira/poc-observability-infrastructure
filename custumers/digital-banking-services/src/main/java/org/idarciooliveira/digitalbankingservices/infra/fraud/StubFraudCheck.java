@@ -3,6 +3,8 @@ package org.idarciooliveira.digitalbankingservices.infra.fraud;
 import io.opentelemetry.instrumentation.annotations.WithSpan;
 import org.idarciooliveira.digitalbankingservices.domain.usecase.FraudCheck;
 import org.idarciooliveira.digitalbankingservices.infra.metrics.TransferMetrics;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -14,6 +16,7 @@ import java.math.BigDecimal;
 @Component
 public class StubFraudCheck implements FraudCheck {
 
+    private static final Logger log = LoggerFactory.getLogger(StubFraudCheck.class);
     private static final BigDecimal SUSPICIOUS_THRESHOLD = new BigDecimal("10000");
 
     private final TransferMetrics metrics;
@@ -28,7 +31,10 @@ public class StubFraudCheck implements FraudCheck {
         long start = System.nanoTime();
         try {
             boolean approved = amount.compareTo(SUSPICIOUS_THRESHOLD) < 0;
-            if (!approved) {
+            if (approved) {
+                log.info("fraud.check status=approved source={} amount={}", sourceAccountNumber, amount);
+            } else {
+                log.warn("fraud.check status=rejected source={} amount={}", sourceAccountNumber, amount);
                 metrics.countFraudRejected();
             }
             return approved;

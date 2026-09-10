@@ -6,6 +6,8 @@ import org.idarciooliveira.digitalbankingservices.domain.usecase.CreateAccountUs
 import org.idarciooliveira.digitalbankingservices.domain.usecase.GetAccountUseCase;
 import org.idarciooliveira.digitalbankingservices.infra.http.dto.AccountRequest;
 import org.idarciooliveira.digitalbankingservices.infra.http.dto.AccountResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,6 +21,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/accounts")
 public class AccountController {
 
+    private static final Logger log = LoggerFactory.getLogger(AccountController.class);
+
     private final CreateAccountUsecase createAccountUsecase;
     private final GetAccountUseCase getAccountUseCase;
 
@@ -31,12 +35,14 @@ public class AccountController {
     public ResponseEntity<AccountResponse> create(@Valid @RequestBody AccountRequest accountRequest){
         Account account = createAccountUsecase
                 .process(accountRequest.accountNumber(),accountRequest.balance());
+        log.info("account.create status=success accountNumber={}", account.getAccountNumber());
         return ResponseEntity.status(HttpStatus.CREATED).body(AccountResponse.from(account));
     }
 
     @GetMapping("/{accountNumber}")
     public ResponseEntity<AccountResponse> get(@PathVariable String accountNumber) {
         Account account = getAccountUseCase.get(accountNumber);
+        log.info("account.get status=success accountNumber={}", accountNumber);
         return ResponseEntity.ok(AccountResponse.from(account));
     }
 }

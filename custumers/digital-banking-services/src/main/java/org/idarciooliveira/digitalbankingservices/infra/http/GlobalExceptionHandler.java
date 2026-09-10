@@ -24,11 +24,13 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler({AccountNotFoundException.class, TransferNotFoundException.class})
     public ResponseEntity<String> handleNotFound(RuntimeException ex) {
+        log.warn("request.failed status=not_found reason={}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ex.getMessage());
     }
 
     @ExceptionHandler(AccountAlreadyExistException.class)
     public ResponseEntity<String> handleConflict(AccountAlreadyExistException ex) {
+        log.warn("request.failed status=conflict reason={}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(ex.getMessage());
     }
 
@@ -37,6 +39,7 @@ public class GlobalExceptionHandler {
         Map<String, String> errors = new HashMap<>();
         ex.getBindingResult().getFieldErrors()
                 .forEach(error -> errors.put(error.getField(), error.getDefaultMessage()));
+        log.warn("request.failed status=validation_error fields={}", errors);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errors);
     }
 
