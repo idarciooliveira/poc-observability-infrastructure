@@ -15,8 +15,11 @@ services:
       OTEL_METRICS_EXPORTER: otlp
       OTEL_LOGS_EXPORTER: otlp
       OTEL_METRIC_EXPORT_INTERVAL: 15000
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4317
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4320}
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      # Phase 6 (FR-06): gateway authenticates this tenant via bearer token.
+      # Must match INSURANCE_TOKEN in the root observability .env.
+      OTEL_EXPORTER_OTLP_HEADERS: Authorization=Bearer ${INSURANCE_TOKEN:-dev-insurance-token-local-only}
       OTEL_INSTRUMENTATION_MICROMETER_ENABLED: "true"
 
   insurance-api:
@@ -46,8 +49,11 @@ services:
       OTEL_METRICS_EXPORTER: otlp
       OTEL_LOGS_EXPORTER: otlp
       OTEL_METRIC_EXPORT_INTERVAL: 15000
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4317
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4320}
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      # Phase 6 (FR-06): gateway authenticates this tenant via bearer token.
+      # Must match INSURANCE_TOKEN in the root observability .env.
+      OTEL_EXPORTER_OTLP_HEADERS: Authorization=Bearer ${INSURANCE_TOKEN:-dev-insurance-token-local-only}
       OTEL_INSTRUMENTATION_MICROMETER_ENABLED: "true"
 
   postgres:

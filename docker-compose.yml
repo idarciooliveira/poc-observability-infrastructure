@@ -9,15 +9,19 @@
 # app side (Step 4) or run the app on the `observability` network.
 # Replaced by proper networking in Phase 7.
 #
-# Port map (Step 0): 4317/4318 collector, 3000 grafana, 3200 tempo, 9009 mimir
-# published; Loki stays INTERNAL (plan) — reachable only inside the network.
+# Port map (Step 0, Phase 6): gateway publishes 4317/4318 (banking) +
+# 4320/4321 (insurance); 3000 grafana, 3200 tempo, 9009 mimir published;
+# Loki stays INTERNAL (plan) — reachable only inside the network.
+# The internal otel-collector exposes OTLP on the observability network ONLY
+# (no host ports) — the gateway is the sole public ingestion path.
 #
 # Healthcheck pattern: tempo + grafana ship wget/sh (real HTTP probes). loki,
 # mimir and otel-collector images are DISTROLESS (verified: no sh/wget/curl),
 # so no in-container probe binary exists — they run healthcheck NONE and their
 # readiness is gated out-of-band (Grafana datasource checks for Loki,
-# host :9009/ready for Mimir, host TCP 4317/4318 + startup logs for the
-# Collector). depends_on uses service_started for those three.
+# host :9009/ready for Mimir, host TCP 4317/4318/4320/4321 + startup logs for
+# the gateway, downstream delivery for the internal Collector). depends_on
+# uses service_started for those three.
 
 services:
   loki:
@@ -75,9 +79,8 @@ services:
     command: ["--config=/etc/otel/collector-config.yaml"]
     volumes:
       - ./observability/otel/collector-config.yaml:/etc/otel/collector-config.yaml:ro
-    ports:
-      - "4317:4317"
-      - "4318:4318"
+    # Phase 6: NO host ports — OTLP only on the observability network.
+    # Public ingestion goes through otel-gateway (per-tenant token auth).
     networks:
       - observability
     depends_on:
@@ -87,7 +90,36 @@ services:
         condition: service_healthy
       mimir:
         condition: service_started
-    # Distroless (see header): readiness via host TCP 4317/4318 + logs.
+    # Distroless (see header): readiness via gateway logs + downstream checks.
+    healthcheck:
+      test: ["NONE"]
+
+  # Phase 6 — OTEL gateway: the sole public OTLP endpoint.
+  # Per-tenant listener + token (banking :4317/:4318, insurance :4320/:4321);
+  # each token maps to its tenant server-side and tenant.id is upserted,
+  # so clients cannot spoof or override their tenant identity (FR-06).
+  otel-gateway:
+    image: otel/opentelemetry-collector-contrib:0.135.0
+    container_name: poc-otel-gateway
+    command: ["--config=/etc/otel/gateway-config.yaml"]
+    volumes:
+      - ./observability/otel/gateway-config.yaml:/etc/otel/gateway-config.yaml:ro
+    ports:
+      - "4317:4317" # banking OTLP/gRPC
+      - "4318:4318" # banking OTLP/HTTP
+      - "4320:4320" # insurance OTLP/gRPC
+      - "4321:4321" # insurance OTLP/HTTP
+    environment:
+      # Real values via root .env (gitignored, see .env.example).
+      # Fallbacks are dev-only placeholders for local bring-up.
+      BANKING_TOKEN: ${BANKING_TOKEN:-dev-banking-token-local-only}
+      INSURANCE_TOKEN: ${INSURANCE_TOKEN:-dev-insurance-token-local-only}
+    networks:
+      - observability
+    depends_on:
+      otel-collector:
+        condition: service_started
+    # Distroless (see header): readiness via host TCP 4317/4318/4320/4321 + logs.
     healthcheck:
       test: ["NONE"]
 

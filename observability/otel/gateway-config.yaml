@@ -1,0 +1,128 @@
+# OTEL Gateway (contrib 0.135.0) — Phase 6 multi-tenancy enforcement.
+#
+# Public ingestion only. One listener pair + one bearertokenauth instance per
+# tenant; the token decides the tenant, NOT any client-supplied attribute:
+#   banking   gRPC :4317 / HTTP :4318  -> tenant.id=banking-client
+#   insurance gRPC :4320 / HTTP :4321  -> tenant.id=insurance-client
+#
+# transform/<tenant> uses `set` (upsert): a spoofed tenant.id from the client
+# is OVERWRITTEN server-side, never trusted. The internal collector keeps only
+# `insert` defaults, so it cannot mask a gateway labeling bug.
+#
+# Tokens come from container env (BANKING_TOKEN / INSURANCE_TOKEN, see root
+# .env.example). Real values are never committed; compose supplies dev-only
+# fallbacks for local bring-up.
+
+extensions:
+  bearertokenauth/banking:
+    # Validates `Authorization: Bearer <BANKING_TOKEN>` (gRPC + HTTP).
+    token: "${env:BANKING_TOKEN}"
+  bearertokenauth/insurance:
+    token: "${env:INSURANCE_TOKEN}"
+  health_check:
+  zpages:
+
+receivers:
+  otlp/banking:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"
+        auth:
+          authenticator: bearertokenauth/banking
+      http:
+        endpoint: "0.0.0.0:4318"
+        auth:
+          authenticator: bearertokenauth/banking
+
+  otlp/insurance:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4320"
+        auth:
+          authenticator: bearertokenauth/insurance
+      http:
+        endpoint: "0.0.0.0:4321"
+        auth:
+          authenticator: bearertokenauth/insurance
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+
+  # Authoritative tenant identity: `set` overwrites any client value (upsert).
+  transform/banking:
+    error_mode: ignore
+    trace_statements:
+      - context: resource
+        statements:
+          - set(resource.attributes["tenant.id"], "banking-client")
+          - set(resource.attributes["service.namespace"], "banking")
+    metric_statements:
+      - context: resource
+        statements:
+          - set(resource.attributes["tenant.id"], "banking-client")
+          - set(resource.attributes["service.namespace"], "banking")
+    log_statements:
+      - context: resource
+        statements:
+          - set(resource.attributes["tenant.id"], "banking-client")
+          - set(resource.attributes["service.namespace"], "banking")
+
+  transform/insurance:
+    error_mode: ignore
+    trace_statements:
+      - context: resource
+        statements:
+          - set(resource.attributes["tenant.id"], "insurance-client")
+          - set(resource.attributes["service.namespace"], "insurance")
+    metric_statements:
+      - context: resource
+        statements:
+          - set(resource.attributes["tenant.id"], "insurance-client")
+          - set(resource.attributes["service.namespace"], "insurance")
+    log_statements:
+      - context: resource
+        statements:
+          - set(resource.attributes["tenant.id"], "insurance-client")
+          - set(resource.attributes["service.namespace"], "insurance")
+
+  batch:
+    send_batch_size: 1024
+    timeout: 10s
+
+exporters:
+  # Sole downstream: the internal collector on the observability network.
+  otlp:
+    endpoint: "otel-collector:4317"
+    tls:
+      insecure: true
+
+service:
+  extensions: [bearertokenauth/banking, bearertokenauth/insurance, health_check, zpages]
+  pipelines:
+    traces/banking:
+      receivers: [otlp/banking]
+      processors: [memory_limiter, transform/banking, batch]
+      exporters: [otlp]
+    metrics/banking:
+      receivers: [otlp/banking]
+      processors: [memory_limiter, transform/banking, batch]
+      exporters: [otlp]
+    logs/banking:
+      receivers: [otlp/banking]
+      processors: [memory_limiter, transform/banking, batch]
+      exporters: [otlp]
+    traces/insurance:
+      receivers: [otlp/insurance]
+      processors: [memory_limiter, transform/insurance, batch]
+      exporters: [otlp]
+    metrics/insurance:
+      receivers: [otlp/insurance]
+      processors: [memory_limiter, transform/insurance, batch]
+      exporters: [otlp]
+    logs/insurance:
+      receivers: [otlp/insurance]
+      processors: [memory_limiter, transform/insurance, batch]
+      exporters: [otlp]

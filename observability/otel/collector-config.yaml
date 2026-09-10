@@ -27,16 +27,19 @@ processors:
     limit_mib: 512
     spike_limit_mib: 128
 
-  # Default tenant/service identity when the app does not set it.
-  # Phase 6 owns enforcement (tokens); this only fills gaps.
+  # Quarantine default for traffic that bypassed the gateway (reachable only
+  # from the observability network). Phase 6: `insert` fills gaps ONLY — the
+  # gateway already upserted the authoritative tenant, so this never overrides
+  # it. `unknown` (not banking-client) so unlabeled traffic cannot masquerade
+  # as a real tenant; it stays visible under tenant.id=unknown for triage.
   resource:
     attributes:
       - key: tenant.id
         action: insert
-        value: banking-client
+        value: unknown
       - key: service.namespace
         action: insert
-        value: banking
+        value: unknown
 
   # Scrub digit runs of 8+ (fake account numbers) from attributes and bodies.
   transform:

@@ -17,6 +17,9 @@ services:
       OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-15000}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4317}
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      # Phase 6 (FR-06): gateway authenticates this tenant via bearer token.
+      # Must match BANKING_TOKEN in the root observability .env.
+      OTEL_EXPORTER_OTLP_HEADERS: Authorization=Bearer ${BANKING_TOKEN:-dev-banking-token-local-only}
       OTEL_INSTRUMENTATION_MICROMETER_ENABLED: "true"
 
   banking-api:
@@ -38,7 +41,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-digital_banking}
       # Fraud Service (Phase 4: distributed tracing)
       FRAUD_SERVICE_URL: http://fraud-service:8081
-      # OpenTelemetry (Phase 3: OTLP/gRPC to the root observability stack's Collector.
+      # OpenTelemetry (Phase 6: OTLP/gRPC to the gateway's banking listener.
       # host.docker.internal resolves out of the box under Docker Desktop; if
       # you move to native Docker Engine/WSL2 without Docker Desktop, add
       # `extra_hosts: ["host.docker.internal:host-gateway"]` here.)
@@ -50,6 +53,9 @@ services:
       OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-15000}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4317}
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      # Phase 6 (FR-06): gateway authenticates this tenant via bearer token.
+      # Must match BANKING_TOKEN in the root observability .env.
+      OTEL_EXPORTER_OTLP_HEADERS: Authorization=Bearer ${BANKING_TOKEN:-dev-banking-token-local-only}
       # Micrometer meters (TransferMetrics: bank.transfers.total, bank.fraud.*)
       # are NOT bridged into OTLP by default — this opts the agent in.
       OTEL_INSTRUMENTATION_MICROMETER_ENABLED: "true"
