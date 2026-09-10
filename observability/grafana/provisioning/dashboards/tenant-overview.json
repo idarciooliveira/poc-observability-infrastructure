@@ -1,0 +1,107 @@
+{
+  "uid": "poc-tenant-overview",
+  "title": "POC — Tenant Overview",
+  "tags": ["poc", "phase-8"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "tenant",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "mimir_ds" },
+        "definition": "label_values(tenant_id)",
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request rate by tenant",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "mimir_ds" },
+      "targets": [
+        {
+          "expr": "sum by (tenant_id) (rate(http_server_request_duration_seconds_count{tenant_id=~\"${tenant:regex}\"}[$__rate_interval]))",
+          "legendFormat": "{{tenant_id}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "p95 HTTP latency by tenant",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "mimir_ds" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (tenant_id, le) (rate(http_server_request_duration_seconds_bucket{tenant_id=~\"${tenant:regex}\"}[$__rate_interval])))",
+          "legendFormat": "{{tenant_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 3,
+      "title": "HTTP errors (4xx/5xx) by tenant",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "mimir_ds" },
+      "targets": [
+        {
+          "expr": "sum by (tenant_id, http_response_status_code) (rate(http_server_request_duration_seconds_count{tenant_id=~\"${tenant:regex}\", http_response_status_code=~\"4..|5..\"}[$__rate_interval]))",
+          "legendFormat": "{{tenant_id}} {{http_response_status_code}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Business outcomes — transfers by status",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "mimir_ds" },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(bank_transfers_total[$__rate_interval]))",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Business outcomes — claims by status",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "mimir_ds" },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(insurance_claims_total[$__rate_interval]))",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Logs by tenant (drill into trace_id via Trace link)",
+      "type": "logs",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 16 },
+      "datasource": { "type": "loki", "uid": "loki_ds" },
+      "targets": [
+        {
+          "expr": "{tenant_id=~\"${tenant:regex}\"}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

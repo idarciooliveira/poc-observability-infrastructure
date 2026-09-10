@@ -1,0 +1,94 @@
+{
+  "uid": "poc-insurance",
+  "title": "POC — Insurance",
+  "tags": ["poc", "phase-8", "insurance"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Claim rate by status",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "mimir_ds" },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(insurance_claims_total{tenant_id=\"insurance-client\"}[$__rate_interval]))",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Risk rejection rate",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "mimir_ds" },
+      "targets": [
+        {
+          "expr": "sum(rate(insurance_risk_rejected_total{tenant_id=\"insurance-client\"}[$__rate_interval]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Risk rejection ratio",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "mimir_ds" },
+      "targets": [
+        {
+          "expr": "sum(rate(insurance_risk_rejected_total{tenant_id=\"insurance-client\"}[$__rate_interval])) / sum(rate(insurance_claims_total{tenant_id=\"insurance-client\"}[$__rate_interval]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit" } }
+    },
+    {
+      "id": 4,
+      "title": "p95 claim processing latency",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "mimir_ds" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(insurance_claim_duration_seconds_bucket{tenant_id=\"insurance-client\"}[$__rate_interval])))",
+          "legendFormat": "p95 claim.evaluate",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 5,
+      "title": "p95 risk-evaluation latency",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "mimir_ds" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(insurance_risk_duration_seconds_bucket{tenant_id=\"insurance-client\"}[$__rate_interval])))",
+          "legendFormat": "p95 risk.evaluate",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 6,
+      "title": "Insurance logs (trace_id links to Tempo)",
+      "type": "logs",
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "loki", "uid": "loki_ds" },
+      "targets": [
+        {
+          "expr": "{tenant_id=\"insurance-client\"}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}
