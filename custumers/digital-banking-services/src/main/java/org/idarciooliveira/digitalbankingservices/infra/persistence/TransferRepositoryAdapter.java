@@ -1,5 +1,6 @@
 package org.idarciooliveira.digitalbankingservices.infra.persistence;
 
+import io.opentelemetry.instrumentation.annotations.WithSpan;
 import org.idarciooliveira.digitalbankingservices.domain.model.Transfer;
 import org.idarciooliveira.digitalbankingservices.domain.repository.TransferRepository;
 import org.springframework.stereotype.Repository;
@@ -16,6 +17,7 @@ public class TransferRepositoryAdapter implements TransferRepository {
         this.jpaRepository = jpaRepository;
     }
 
+    @WithSpan("database.update")
     @Override
     public void save(Transfer transfer) {
         TransferEntity entity = new TransferEntity(

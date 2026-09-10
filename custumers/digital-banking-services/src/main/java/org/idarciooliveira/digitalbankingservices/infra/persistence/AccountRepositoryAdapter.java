@@ -1,5 +1,6 @@
 package org.idarciooliveira.digitalbankingservices.infra.persistence;
 
+import io.opentelemetry.instrumentation.annotations.WithSpan;
 import org.idarciooliveira.digitalbankingservices.domain.model.Account;
 import org.idarciooliveira.digitalbankingservices.domain.repository.AccountRepository;
 import org.springframework.stereotype.Repository;
@@ -22,6 +23,7 @@ public class AccountRepositoryAdapter implements AccountRepository {
                 .map(entity -> new Account(entity.getId(), entity.getAccountNumber(), entity.getBalance()));
     }
 
+    @WithSpan("database.update")
     @Override
     public void save(Account account) {
         AccountEntity entity = jpaRepository.findById(account.getId())
