@@ -9,8 +9,12 @@
 # app side (Step 4) or run the app on the `observability` network.
 # Replaced by proper networking in Phase 7.
 #
-# Port map (Step 0, Phase 6): gateway publishes 4317/4318 (banking) +
-# 4320/4321 (insurance); 3000 grafana, 3200 tempo, 9009 mimir published;
+# Port map (Step 0, Phase 6, Phase 7): gateway publishes 4317/4318 (banking)
+# + 4320/4321 (insurance) — the UNIQUE public ingestion endpoint, the production
+# mimic (external tenants reach only these; in production the gateway sits
+# behind a LB/firewall with just the OTLP ports public). Grafana :3000 stays
+# published for the operator UI. Tempo/Mimir publish NOTHING (Phase 7) — the
+# operator queries them through Grafana datasources over the internal network.
 # Loki stays INTERNAL (plan) — reachable only inside the network.
 # The internal otel-collector exposes OTLP on the observability network ONLY
 # (no host ports) — the gateway is the sole public ingestion path.
@@ -18,9 +22,8 @@
 # Healthcheck pattern: tempo + grafana ship wget/sh (real HTTP probes). loki,
 # mimir and otel-collector images are DISTROLESS (verified: no sh/wget/curl),
 # so no in-container probe binary exists — they run healthcheck NONE and their
-# readiness is gated out-of-band (Grafana datasource checks for Loki,
-# host :9009/ready for Mimir, host TCP 4317/4318/4320/4321 + startup logs for
-# the gateway, downstream delivery for the internal Collector). depends_on
+# readiness is gated out-of-band (Grafana datasource checks for Loki/Tempo/
+# Mimir, startup logs for the gateway and internal Collector). depends_on
 # uses service_started for those three.
 
 services:
@@ -47,8 +50,8 @@ services:
     volumes:
       - ./observability/tempo/config.yaml:/etc/tempo.yaml:ro
       - tempo-data:/tmp/tempo
-    ports:
-      - "3200:3200"
+    # Phase 7: no host ports — queried via Grafana datasource over the
+    # internal network only.
     networks:
       - observability
     healthcheck:
@@ -65,11 +68,11 @@ services:
     volumes:
       - ./observability/mimir/config.yaml:/etc/mimir/config.yaml:ro
       - mimir-data:/tmp/mimir
-    ports:
-      - "9009:9009"
+    # Phase 7: no host ports — queried via Grafana datasource over the
+    # internal network only.
     networks:
       - observability
-    # Distroless (see header): readiness via host curl :9009/ready.
+    # Distroless (see header): readiness via Grafana Mimir-datasource check.
     healthcheck:
       test: ["NONE"]
 
