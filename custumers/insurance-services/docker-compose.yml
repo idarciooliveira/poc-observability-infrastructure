@@ -1,0 +1,77 @@
+services:
+  risk-service:
+    build:
+      context: ../risk-service
+      dockerfile: Dockerfile
+    container_name: insurance-risk-service
+    ports:
+      - "8082:8082"
+    networks:
+      - client-insurance
+    environment:
+      OTEL_SERVICE_NAME: risk-service
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=insurance,tenant.id=insurance-client,deployment.environment=dev
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: otlp
+      OTEL_LOGS_EXPORTER: otlp
+      OTEL_METRIC_EXPORT_INTERVAL: 15000
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_INSTRUMENTATION_MICROMETER_ENABLED: "true"
+
+  insurance-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: insurance-api
+    # Host port 8083: banking-api already occupies host 8080.
+    # Container still serves 8080; test via http://localhost:8083.
+    ports:
+      - "8083:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      risk-service:
+        condition: service_started
+    networks:
+      - client-insurance
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/insurance_db
+      SPRING_DATASOURCE_USERNAME: insurance_user
+      SPRING_DATASOURCE_PASSWORD: insurance_pass
+      RISK_SERVICE_URL: http://risk-service:8082
+      OTEL_SERVICE_NAME: insurance-api
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=insurance,tenant.id=insurance-client,deployment.environment=dev
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: otlp
+      OTEL_LOGS_EXPORTER: otlp
+      OTEL_METRIC_EXPORT_INTERVAL: 15000
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_INSTRUMENTATION_MICROMETER_ENABLED: "true"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: insurance-postgres
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: insurance_db
+      POSTGRES_USER: insurance_user
+      POSTGRES_PASSWORD: insurance_pass
+    volumes:
+      - insurance-postgres-data:/var/lib/postgresql/data
+    networks:
+      - client-insurance
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U insurance_user -d insurance_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  insurance-postgres-data:
+
+networks:
+  client-insurance:
+    name: client-insurance
