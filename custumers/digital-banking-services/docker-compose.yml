@@ -1,6 +1,8 @@
 services:
   banking-api:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: digital-banking-api
     ports:
       - "${BANKING_API_PORT:-8080}:8080"
@@ -8,9 +10,20 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      # Database
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-digital_banking}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-digital_banking}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-digital_banking}
+      # OpenTelemetry (Phase 2: stdout via logging exporter, nothing leaves the service)
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-banking-api}
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=banking,tenant.id=banking-client,deployment.environment=${ENV:-dev}
+      OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-logging}
+      OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-logging}
+      OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-logging}
+      OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-15000}
+      # Kept for Phase 3 (collector). Unused while exporters=logging.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4318}
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
     networks:
       - client-banking
 
