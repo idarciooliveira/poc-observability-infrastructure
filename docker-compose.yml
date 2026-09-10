@@ -1,0 +1,132 @@
+# Phase 3 observability stack — root compose, side by side with banking.
+#
+# Banking's compose (custumers/digital-banking-services/docker-compose.yml) is
+# UNTOUCHED. In Phase 3 both composes run side by side; the app reaches the
+# Collector via host.docker.internal:4317/4318. That hostname is injected out
+# of the box under Docker Desktop for Windows. It BREAKS under native Docker
+# Engine / WSL2 without Docker Desktop (no auto-injected host gateway) — if
+# you run there, add `host.docker.internal:host-gateway` extra_hosts on the
+# app side (Step 4) or run the app on the `observability` network.
+# Replaced by proper networking in Phase 7.
+#
+# Port map (Step 0): 4317/4318 collector, 3000 grafana, 3200 tempo, 9009 mimir
+# published; Loki stays INTERNAL (plan) — reachable only inside the network.
+#
+# Healthcheck pattern: tempo + grafana ship wget/sh (real HTTP probes). loki,
+# mimir and otel-collector images are DISTROLESS (verified: no sh/wget/curl),
+# so no in-container probe binary exists — they run healthcheck NONE and their
+# readiness is gated out-of-band (Grafana datasource checks for Loki,
+# host :9009/ready for Mimir, host TCP 4317/4318 + startup logs for the
+# Collector). depends_on uses service_started for those three.
+
+services:
+  loki:
+    image: grafana/loki:3.7.6
+    container_name: poc-loki
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./observability/loki/config.yaml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+    networks:
+      - observability
+    # Distroless (see header): readiness via Grafana Loki-datasource check.
+    healthcheck:
+      test: ["NONE"]
+
+  tempo:
+    image: grafana/tempo:2.8.0
+    container_name: poc-tempo
+    # Tempo 2.8 image runs non-root; named volumes arrive root-owned, so it
+    # cannot mkdir its data dirs. Root here is a local-POC concession.
+    user: "0"
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./observability/tempo/config.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/tmp/tempo
+    ports:
+      - "3200:3200"
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3200/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  mimir:
+    image: grafana/mimir:2.16.0
+    container_name: poc-mimir
+    command: ["-config.file=/etc/mimir/config.yaml"]
+    volumes:
+      - ./observability/mimir/config.yaml:/etc/mimir/config.yaml:ro
+      - mimir-data:/tmp/mimir
+    ports:
+      - "9009:9009"
+    networks:
+      - observability
+    # Distroless (see header): readiness via host curl :9009/ready.
+    healthcheck:
+      test: ["NONE"]
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.135.0
+    container_name: poc-otel-collector
+    command: ["--config=/etc/otel/collector-config.yaml"]
+    volumes:
+      - ./observability/otel/collector-config.yaml:/etc/otel/collector-config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    networks:
+      - observability
+    depends_on:
+      loki:
+        condition: service_started
+      tempo:
+        condition: service_healthy
+      mimir:
+        condition: service_started
+    # Distroless (see header): readiness via host TCP 4317/4318 + logs.
+    healthcheck:
+      test: ["NONE"]
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    container_name: poc-grafana
+    volumes:
+      - ./observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    networks:
+      - observability
+    depends_on:
+      loki:
+        condition: service_started
+      tempo:
+        condition: service_healthy
+      mimir:
+        condition: service_started
+      otel-collector:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  loki-data:
+  tempo-data:
+  mimir-data:
+  grafana-data:
+
+networks:
+  observability:
+    name: observability

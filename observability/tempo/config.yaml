@@ -1,0 +1,29 @@
+# Tempo 2.8.0 — Phase 3 single-node, local filesystem backend.
+#
+# The Collector is Tempo's OTLP client (gRPC :4317). Restricting which clients
+# may reach Tempo is a network-isolation concern, enforced by Docker networks in
+# Phase 7 — not by receiver settings here. Both OTLP receivers are enabled:
+# gRPC is the Collector path, HTTP stays for manual testing.
+# NOTE: Tempo 2.8 changed the default http-listen-port from 80 to 3200; set
+# explicitly so the value does not depend on image defaults.
+
+server:
+  http_listen_address: 0.0.0.0
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /tmp/tempo/traces
+    wal:
+      path: /tmp/tempo/wal

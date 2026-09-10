@@ -6,7 +6,6 @@ import org.idarciooliveira.digitalbankingservices.domain.repository.AccountRepos
 import org.springframework.stereotype.Repository;
 
 import java.util.Optional;
-import java.util.UUID;
 
 @Repository
 public class AccountRepositoryAdapter implements AccountRepository {

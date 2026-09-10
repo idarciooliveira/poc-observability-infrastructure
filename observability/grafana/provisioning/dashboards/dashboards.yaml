@@ -1,0 +1,14 @@
+# Grafana dashboard provider — Phase 3 placeholder.
+# No dashboards ship in Phase 3 (deferred to Phase 8 / FR-12). This provider
+# only reserves the path so Step 3 compose mounts stay stable.
+apiVersion: 1
+
+providers:
+  - name: poc
+    folder: POC
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

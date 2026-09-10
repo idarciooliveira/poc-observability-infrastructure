@@ -1,0 +1,93 @@
+# Collector contrib 0.135.0 — Phase 3 shared ingestion.
+#
+# Step 0 findings applied here:
+# - NO `loki` exporter: removed from the contrib distribution (deprecated
+#   2024-07-09, issues #33916/#38374). Logs ship via OTLP HTTP to Loki's
+#   native OTLP endpoint (Loki v3+, reference-proven).
+# - Traces ship via OTLP gRPC to Tempo (reference-proven); the plan's
+#   `otlphttp->Tempo` would also work, gRPC is the proven path.
+# - Metrics ship via prometheusremotewrite to Mimir (beta, core+contrib).
+#
+# Sensitive-data handling: `transform` (OTTL replace_pattern), NOT `redaction`.
+# `redaction` is an attribute allow/block-list filter and cannot scrub patterns
+# embedded inside strings; account numbers can appear in plain log bodies, so
+# both span/log attributes (e.g. url.path) AND log bodies are scrubbed.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"
+      http:
+        endpoint: "0.0.0.0:4318"
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  # Default tenant/service identity when the app does not set it.
+  # Phase 6 owns enforcement (tokens); this only fills gaps.
+  resource:
+    attributes:
+      - key: tenant.id
+        action: insert
+        value: banking-client
+      - key: service.namespace
+        action: insert
+        value: banking
+
+  # Scrub digit runs of 8+ (fake account numbers) from attributes and bodies.
+  transform:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - replace_pattern(span.attributes["url.path"], "\\b\\d{8,}\\b", "[REDACTED]") where span.attributes["url.path"] != nil
+          - replace_pattern(span.attributes["http.target"], "\\b\\d{8,}\\b", "[REDACTED]") where span.attributes["http.target"] != nil
+    log_statements:
+      - context: log
+        statements:
+          - replace_pattern(log.attributes["url.path"], "\\b\\d{8,}\\b", "[REDACTED]") where log.attributes["url.path"] != nil
+          - replace_pattern(log.body, "\\b\\d{8,}\\b", "[REDACTED]") where IsString(log.body)
+
+  batch:
+    send_batch_size: 1024
+    timeout: 10s
+
+exporters:
+  otlp/tempo:
+    endpoint: "tempo:4317"
+    tls:
+      insecure: true
+
+  otlphttp/loki:
+    endpoint: "http://loki:3100/otlp/"
+
+  prometheusremotewrite/mimir:
+    endpoint: "http://mimir:9009/api/v1/push"
+    # Promote resource attrs (tenant.id, service.*) to labels so Grafana can
+    # filter metrics by tenant.id (Phase 3 exit gate).
+    resource_to_telemetry_conversion:
+      enabled: true
+
+extensions:
+  health_check:
+  zpages:
+
+service:
+  extensions: [health_check, zpages]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, transform, batch]
+      exporters: [otlp/tempo]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheusremotewrite/mimir]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, transform, batch]
+      exporters: [otlphttp/loki]

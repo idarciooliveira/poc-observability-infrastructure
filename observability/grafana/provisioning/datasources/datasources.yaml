@@ -1,0 +1,48 @@
+# Grafana 12.1.0 datasource provisioning — Phase 3.
+# Loki/Tempo shapes follow the vinsguru reference (trace <-> log correlation);
+# Mimir is exposed as a Prometheus datasource at /prometheus (official Mimir
+# "Get started" wiring). Dashboards filter by the `tenant.id` label carried on
+# every record (Phase 6 owns enforcement, Phase 8 owns dashboards).
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    uid: loki_ds
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: false
+    jsonData:
+      derivedFields:
+        - datasourceUid: tempo_ds
+          matcherRegex: trace_id
+          matcherType: label
+          name: Trace
+          targetBlank: true
+          url: '${__value.raw}'
+          urlDisplayLabel: ''
+      pdcInjected: false
+
+  - name: Tempo
+    uid: tempo_ds
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    isDefault: true
+    jsonData:
+      pdcInjected: false
+      tracesToLogsV2:
+        customQuery: true
+        datasourceUid: loki_ds
+        filterBySpanID: false
+        filterByTraceID: false
+        query: '{service_name=~".+"} | trace_id = `${__span.traceId}`'
+
+  - name: Mimir
+    uid: mimir_ds
+    type: prometheus
+    access: proxy
+    url: http://mimir:9009/prometheus
+    isDefault: false
+    jsonData:
+      pdcInjected: false
