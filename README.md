@@ -19,6 +19,32 @@ using the **OpenTelemetry + LGTM** stack.
 
 > This is a POC. It is intended to validate the architecture and operational workflow, not to provide a production-ready platform.
 
+## Quickstart
+
+Prerequisites: Docker (Desktop on Windows/macOS, or Engine on Linux) with `docker compose`.
+
+```powershell
+# Windows (PowerShell)
+.\scripts\up.ps1
+```
+
+```sh
+# Linux / macOS / Git Bash
+./scripts/up.sh
+```
+
+This starts all three stacks in order (observability → banking → insurance),
+creating missing `.env` files from `.env.example` on first run. The root
+`.env` is the single source of truth for `BANKING_TOKEN`/`INSURANCE_TOKEN` —
+the scripts export them so gateway and clients always agree (FR-06).
+
+Endpoints: Grafana http://localhost:3000 (`admin`/`admin`), Banking API
+http://localhost:8080, Insurance API http://localhost:8083.
+
+```powershell
+.\scripts\down.ps1          # stop everything (add -Volumes to drop data)
+```
+
 ## Architecture
 
 ```text
