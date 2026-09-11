@@ -45,6 +45,17 @@ http://localhost:8080, Insurance API http://localhost:8083.
 .\scripts\down.ps1          # stop everything (add -Volumes to drop data)
 ```
 
+### Generate load
+
+```powershell
+.\scripts\load-k6.ps1 -DurationMin 1 -Vus 2                 # quick smoke test (~2.5 min)
+.\scripts\load-k6.ps1 -DurationMin 5 -Vus 10                # default: ~8-10k requests, both tenants
+.\scripts\load-k6.ps1 -DurationMin 5 -Vus 10 -Chaos latency # 2.5s downstream delay (trips 2s timeout)
+.\scripts\load-k6.ps1 -DurationMin 5 -Vus 10 -Chaos rejects # 30% forced fraud/risk rejections
+# Git Bash: ./scripts/load-k6.sh --duration-min 1 --vus 2 [--chaos off|latency|rejects]
+# k6 runs in Docker (grafana/k6, no local install); watch it live in Grafana → Tenant Overview.
+```
+
 ## Architecture
 
 ```text
