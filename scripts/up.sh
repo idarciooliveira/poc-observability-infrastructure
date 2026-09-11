@@ -56,6 +56,15 @@ if [ -z "${BANKING_TOKEN:-}" ] || [ -z "${INSURANCE_TOKEN:-}" ]; then
   exit 1
 fi
 export BANKING_TOKEN INSURANCE_TOKEN
+# Prod hardening #4: Grafana admin comes from the same root .env.
+GF_ADMIN_USER="$(get_env_value "$ROOT/.env" GF_ADMIN_USER)"
+GF_ADMIN_PASSWORD="$(get_env_value "$ROOT/.env" GF_ADMIN_PASSWORD)"
+[ -z "${GF_ADMIN_USER:-}" ] && GF_ADMIN_USER="admin"
+[ -z "${GF_ADMIN_PASSWORD:-}" ] && GF_ADMIN_PASSWORD="admin"
+export GF_ADMIN_USER GF_ADMIN_PASSWORD
+
+echo "NOTE: storage isolation is now enforced (Loki/Mimir/Tempo multitenancy)."
+echo "If upgrading from a pre-multitenancy stack, run ./scripts/down.sh --volumes once — old data under tenant fake/anonymous is invisible."
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "ERROR: docker not found in PATH." >&2

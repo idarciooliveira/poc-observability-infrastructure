@@ -30,6 +30,14 @@ services:
   loki:
     image: grafana/loki:3.7.6
     container_name: poc-loki
+    restart: unless-stopped
+    mem_limit: 1g
+    mem_reservation: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     command: ["-config.file=/etc/loki/config.yaml"]
     volumes:
       - ./observability/loki/config.yaml:/etc/loki/config.yaml:ro
@@ -43,6 +51,14 @@ services:
   tempo:
     image: grafana/tempo:2.8.0
     container_name: poc-tempo
+    restart: unless-stopped
+    mem_limit: 1g
+    mem_reservation: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     # Tempo 2.8 image runs non-root; named volumes arrive root-owned, so it
     # cannot mkdir its data dirs. Root here is a local-POC concession.
     user: "0"
@@ -64,6 +80,14 @@ services:
   mimir:
     image: grafana/mimir:2.16.0
     container_name: poc-mimir
+    restart: unless-stopped
+    mem_limit: 2g
+    mem_reservation: 1g
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     command: ["-config.file=/etc/mimir/config.yaml"]
     volumes:
       - ./observability/mimir/config.yaml:/etc/mimir/config.yaml:ro
@@ -79,6 +103,14 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.135.0
     container_name: poc-otel-collector
+    restart: unless-stopped
+    mem_limit: 1g
+    mem_reservation: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     command: ["--config=/etc/otel/collector-config.yaml"]
     volumes:
       - ./observability/otel/collector-config.yaml:/etc/otel/collector-config.yaml:ro
@@ -104,6 +136,14 @@ services:
   otel-gateway:
     image: otel/opentelemetry-collector-contrib:0.135.0
     container_name: poc-otel-gateway
+    restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     command: ["--config=/etc/otel/gateway-config.yaml"]
     volumes:
       - ./observability/otel/gateway-config.yaml:/etc/otel/gateway-config.yaml:ro
@@ -129,6 +169,14 @@ services:
   grafana:
     image: grafana/grafana:12.1.0
     container_name: poc-grafana
+    restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - ./observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - ./observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
@@ -136,8 +184,12 @@ services:
     ports:
       - "3000:3000"
     environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      # Prod hardening #4: no hardcoded admin/admin. Values come from root
+      # .env (see .env.example); fallbacks are local-only.
+      GF_SECURITY_ADMIN_USER: ${GF_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
     networks:
       - observability
     depends_on:

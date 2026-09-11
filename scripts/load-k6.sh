@@ -32,6 +32,12 @@ Notes:
   k6 runs in Docker (grafana/k6) on the default bridge network via
   http://host.docker.internal:8080|:8083 (Docker Desktop resolves it;
   native-Linux Engine may need extra_hosts, see compose comments).
+  Backends enforce X-Scope-OrgID (multitenancy): if dashboards stay empty
+  after enabling it, reset volumes once (./scripts/down.sh --volumes) and
+  re-run load to repopulate both tenants. Operator DS are federated
+  (banking-client|insurance-client); Loki-banking/-insurance etc. prove
+  isolation in Explore. Services have mem limits — watch 'docker stats'
+  on high --vus runs.
 EOF
       exit 0 ;;
   esac
@@ -118,6 +124,14 @@ if wait_tcp 127.0.0.1 8083 5; then
 else
   echo "WARNING: 127.0.0.1:8083 not reachable — start the stack first: ./scripts/up.sh" >&2
 fi
+echo "== pipeline (gateway must accept OTLP or load runs blind) =="
+for p in 4317 4318 4320 4321; do
+  if wait_tcp 127.0.0.1 "$p" 5; then
+    echo "ok 127.0.0.1:$p"
+  else
+    echo "WARNING: 127.0.0.1:$p not reachable — telemetry will be dropped (see docker compose ps/logs)" >&2
+  fi
+done
 
 # Chaos set-up (restored to 0/0 below, even when k6 fails).
 if [ "$CHAOS" = "latency" ]; then set_chaos "2500" "0"; fi

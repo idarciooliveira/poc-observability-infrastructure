@@ -92,37 +92,70 @@ processors:
     send_batch_size: 1024
     timeout: 10s
 
+  # Prod hardening #2: drop health/readiness noise before it reaches storage.
+  filter:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["http.target"] == "/health" or attributes["http.target"] == "/ready"'
+        - 'attributes["http.route"] == "/health" or attributes["http.route"] == "/ready"'
+    logs:
+      log_record:
+        - 'attributes["http.target"] == "/health" or attributes["http.target"] == "/ready"'
+
 exporters:
-  # Sole downstream: the internal collector on the observability network.
-  otlp:
+  # Per-tenant downstream: distinct internal collector ports keep the tenant
+  # boundary explicit even if X-Scope-OrgID handling ever regresses. Both live
+  # on the observability network only (no host ports).
+  otlp/banking:
     endpoint: "otel-collector:4317"
     tls:
       insecure: true
+    sending_queue:
+      enabled: true
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+  otlp/insurance:
+    endpoint: "otel-collector:4320"
+    tls:
+      insecure: true
+    sending_queue:
+      enabled: true
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
 
 service:
   extensions: [bearertokenauth/banking, bearertokenauth/insurance, health_check, zpages]
   pipelines:
     traces/banking:
       receivers: [otlp/banking]
-      processors: [memory_limiter, transform/banking, batch]
-      exporters: [otlp]
+      processors: [memory_limiter, transform/banking, filter, batch]
+      exporters: [otlp/banking]
     metrics/banking:
       receivers: [otlp/banking]
       processors: [memory_limiter, transform/banking, batch]
-      exporters: [otlp]
+      exporters: [otlp/banking]
     logs/banking:
       receivers: [otlp/banking]
-      processors: [memory_limiter, transform/banking, batch]
-      exporters: [otlp]
+      processors: [memory_limiter, transform/banking, filter, batch]
+      exporters: [otlp/banking]
     traces/insurance:
       receivers: [otlp/insurance]
-      processors: [memory_limiter, transform/insurance, batch]
-      exporters: [otlp]
+      processors: [memory_limiter, transform/insurance, filter, batch]
+      exporters: [otlp/insurance]
     metrics/insurance:
       receivers: [otlp/insurance]
       processors: [memory_limiter, transform/insurance, batch]
-      exporters: [otlp]
+      exporters: [otlp/insurance]
     logs/insurance:
       receivers: [otlp/insurance]
-      processors: [memory_limiter, transform/insurance, batch]
-      exporters: [otlp]
+      processors: [memory_limiter, transform/insurance, filter, batch]
+      exporters: [otlp/insurance]

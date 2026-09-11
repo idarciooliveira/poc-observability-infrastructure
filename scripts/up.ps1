@@ -1,4 +1,4 @@
-# Start the full POC: observability + banking + insurance.
+﻿# Start the full POC: observability + banking + insurance.
 # Fresh-clone safe: bootstraps missing .env files from .env.example and
 # exports the root tokens so all three stacks always agree (FR-06).
 # Usage: .\scripts\up.ps1 [-NoBuild]
@@ -60,6 +60,14 @@ $env:INSURANCE_TOKEN = Get-EnvValue $RootEnv "INSURANCE_TOKEN"
 if ([string]::IsNullOrWhiteSpace($env:BANKING_TOKEN) -or [string]::IsNullOrWhiteSpace($env:INSURANCE_TOKEN)) {
   throw "BANKING_TOKEN / INSURANCE_TOKEN missing in $RootEnv. Copy .env.example to .env and set both tokens."
 }
+# Prod hardening #4: Grafana admin comes from the same root .env.
+$env:GF_ADMIN_USER = Get-EnvValue $RootEnv "GF_ADMIN_USER"
+$env:GF_ADMIN_PASSWORD = Get-EnvValue $RootEnv "GF_ADMIN_PASSWORD"
+if ([string]::IsNullOrWhiteSpace($env:GF_ADMIN_USER)) { $env:GF_ADMIN_USER = "admin" }
+if ([string]::IsNullOrWhiteSpace($env:GF_ADMIN_PASSWORD)) { $env:GF_ADMIN_PASSWORD = "admin" }
+
+Write-Host "NOTE: storage isolation is now enforced (Loki/Mimir/Tempo multitenancy)."
+Write-Host "If upgrading from a pre-multitenancy stack, run .\scripts\down.ps1 -Volumes once - old data under tenant fake/anonymous is invisible."
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { throw "docker not found in PATH." }
 

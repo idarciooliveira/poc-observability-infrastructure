@@ -1,14 +1,19 @@
-# Mimir 2.16.0 — Phase 3 single-binary (target: all), filesystem storage.
+# Mimir 2.16.0 — single-binary (target: all), filesystem storage.
 # Shape follows the official "Get started with Grafana Mimir" monolithic demo.
 #
-# Phase 3 simplification: multitenancy_enabled: false (same caveat as Loki —
-# real tenant separation needs multitenancy + X-Scope-OrgID, revisited in
-# Phase 6). With multitenancy off, the no-auth tenant receives all writes.
+# Prod hardening #1: true storage isolation via multitenancy_enabled: true.
+# Every push/query must carry X-Scope-OrgID. The collector sets it per-tenant;
+# Grafana operator datasources use federated "banking-client|insurance-client"
+# (requires tenant_federation.enabled). NOTE: data written with multitenancy
+# off lives under tenant "anonymous" — reset volumes once after enabling.
 #
 # Do not use this configuration in production. It is for demonstration
 # purposes only.
 
-multitenancy_enabled: false
+multitenancy_enabled: true
+
+tenant_federation:
+  enabled: true
 
 blocks_storage:
   backend: filesystem

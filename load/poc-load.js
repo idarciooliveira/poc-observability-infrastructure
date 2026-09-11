@@ -6,6 +6,15 @@ import { check, sleep } from 'k6';
 //
 // Env (wrappers pass these; defaults = Docker Desktop host mapping):
 //   BANKING_URL, INSURANCE_URL, VUS, RAMP_MIN, STEADY_MIN, CHAOS_MODE
+//
+// Alignment with prod hardening 1-4: this script only drives app APIs —
+// tenant separation happens server-side (gateway overwrites tenant.id and the
+// collector fans out per-tenant with X-Scope-OrgID), so no OTLP headers are
+// needed here. The k6 `tenant` tag below is load-side grouping only. None of
+// these routes are /health|/ready, so the pipeline `filter` keeps all of it.
+// After enabling multitenancy, reset volumes once then re-run load to
+// repopulate both tenants; operator dashboards query federated
+// banking-client|insurance-client, per-tenant DS prove isolation.
 
 const BANKING_URL = __ENV.BANKING_URL || 'http://host.docker.internal:8080';
 const INSURANCE_URL = __ENV.INSURANCE_URL || 'http://host.docker.internal:8083';

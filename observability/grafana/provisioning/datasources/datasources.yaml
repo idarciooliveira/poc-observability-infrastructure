@@ -1,11 +1,16 @@
-# Grafana 12.1.0 datasource provisioning — Phase 3.
+# Grafana 12.1.0 datasource provisioning.
 # Loki/Tempo shapes follow the vinsguru reference (trace <-> log correlation);
-# Mimir is exposed as a Prometheus datasource at /prometheus (official Mimir
-# "Get started" wiring). Dashboards filter by the `tenant.id` label carried on
-# every record (Phase 6 owns enforcement, Phase 8 owns dashboards).
+# Mimir is exposed as a Prometheus datasource at /prometheus.
+#
+# Prod hardening #1: backends now enforce X-Scope-OrgID (Loki auth_enabled,
+# Mimir/Tempo multitenancy). Operator datasources (loki_ds/tempo_ds/mimir_ds)
+# use federated "banking-client|insurance-client" so existing dashboards keep
+# working; per-tenant datasources prove storage isolation (query banking from
+# the insurance datasource -> empty).
 apiVersion: 1
 
 datasources:
+  # ---- Operator (federated, sees both tenants) ----
   - name: Loki
     uid: loki_ds
     type: loki
@@ -13,6 +18,7 @@ datasources:
     url: http://loki:3100
     isDefault: false
     jsonData:
+      httpHeaderName1: X-Scope-OrgID
       derivedFields:
         - datasourceUid: tempo_ds
           matcherRegex: trace_id
@@ -22,6 +28,8 @@ datasources:
           url: '${__value.raw}'
           urlDisplayLabel: ''
       pdcInjected: false
+    secureJsonData:
+      httpHeaderValue1: banking-client|insurance-client
 
   - name: Tempo
     uid: tempo_ds
@@ -30,6 +38,7 @@ datasources:
     url: http://tempo:3200
     isDefault: true
     jsonData:
+      httpHeaderName1: X-Scope-OrgID
       pdcInjected: false
       tracesToLogsV2:
         customQuery: true
@@ -37,6 +46,8 @@ datasources:
         filterBySpanID: false
         filterByTraceID: false
         query: '{service_name=~".+"} | trace_id = `${__span.traceId}`'
+    secureJsonData:
+      httpHeaderValue1: banking-client|insurance-client
 
   - name: Mimir
     uid: mimir_ds
@@ -45,4 +56,68 @@ datasources:
     url: http://mimir:9009/prometheus
     isDefault: false
     jsonData:
+      httpHeaderName1: X-Scope-OrgID
       pdcInjected: false
+    secureJsonData:
+      httpHeaderValue1: banking-client|insurance-client
+
+  # ---- Per-tenant (isolation proof, use in Explore) ----
+  - name: Loki-banking
+    uid: loki_banking_ds
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      httpHeaderName1: X-Scope-OrgID
+    secureJsonData:
+      httpHeaderValue1: banking-client
+
+  - name: Loki-insurance
+    uid: loki_insurance_ds
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      httpHeaderName1: X-Scope-OrgID
+    secureJsonData:
+      httpHeaderValue1: insurance-client
+
+  - name: Tempo-banking
+    uid: tempo_banking_ds
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      httpHeaderName1: X-Scope-OrgID
+    secureJsonData:
+      httpHeaderValue1: banking-client
+
+  - name: Tempo-insurance
+    uid: tempo_insurance_ds
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      httpHeaderName1: X-Scope-OrgID
+    secureJsonData:
+      httpHeaderValue1: insurance-client
+
+  - name: Mimir-banking
+    uid: mimir_banking_ds
+    type: prometheus
+    access: proxy
+    url: http://mimir:9009/prometheus
+    jsonData:
+      httpHeaderName1: X-Scope-OrgID
+    secureJsonData:
+      httpHeaderValue1: banking-client
+
+  - name: Mimir-insurance
+    uid: mimir_insurance_ds
+    type: prometheus
+    access: proxy
+    url: http://mimir:9009/prometheus
+    jsonData:
+      httpHeaderName1: X-Scope-OrgID
+    secureJsonData:
+      httpHeaderValue1: insurance-client

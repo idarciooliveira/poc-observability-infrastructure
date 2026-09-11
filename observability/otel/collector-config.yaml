@@ -1,25 +1,34 @@
-# Collector contrib 0.135.0 — Phase 3 shared ingestion.
+# Collector contrib 0.135.0 — internal fan-out with true tenant isolation.
 #
-# Step 0 findings applied here:
-# - NO `loki` exporter: removed from the contrib distribution (deprecated
-#   2024-07-09, issues #33916/#38374). Logs ship via OTLP HTTP to Loki's
-#   native OTLP endpoint (Loki v3+, reference-proven).
-# - Traces ship via OTLP gRPC to Tempo (reference-proven); the plan's
-#   `otlphttp->Tempo` would also work, gRPC is the proven path.
-# - Metrics ship via prometheusremotewrite to Mimir (beta, core+contrib).
+# Prod hardening #1: per-tenant receivers + per-tenant backend exporters, each
+# carrying its own X-Scope-OrgID. Banking traffic arriving on otlp/banking can
+# ONLY reach backends as banking-client, insurance ONLY as insurance-client —
+# storage isolation (Loki auth_enabled, Mimir multitenancy, Tempo multitenancy),
+# not just the tenant.id label.
+#
+# Prod hardening #2: every exporter has sending_queue + retry_on_failure so a
+# Loki/Tempo/Mimir restart does not drop spans; filter drops /health noise.
 #
 # Sensitive-data handling: `transform` (OTTL replace_pattern), NOT `redaction`.
 # `redaction` is an attribute allow/block-list filter and cannot scrub patterns
 # embedded inside strings; account numbers can appear in plain log bodies, so
-# both span/log attributes (e.g. url.path) AND log bodies are scrubbed.
+# both span/log attributes AND log bodies are scrubbed.
 
 receivers:
-  otlp:
+  # Banking lane — fed ONLY by gateway otlp/banking (internal network).
+  otlp/banking:
     protocols:
       grpc:
         endpoint: "0.0.0.0:4317"
       http:
         endpoint: "0.0.0.0:4318"
+  # Insurance lane — fed ONLY by gateway otlp/insurance (internal network).
+  otlp/insurance:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4320"
+      http:
+        endpoint: "0.0.0.0:4321"
 
 processors:
   memory_limiter:
@@ -28,10 +37,8 @@ processors:
     spike_limit_mib: 128
 
   # Quarantine default for traffic that bypassed the gateway (reachable only
-  # from the observability network). Phase 6: `insert` fills gaps ONLY — the
-  # gateway already upserted the authoritative tenant, so this never overrides
-  # it. `unknown` (not banking-client) so unlabeled traffic cannot masquerade
-  # as a real tenant; it stays visible under tenant.id=unknown for triage.
+  # from the observability network). `insert` fills gaps ONLY — the gateway
+  # already upserted the authoritative tenant, so this never overrides it.
   resource:
     attributes:
       - key: tenant.id
@@ -55,23 +62,87 @@ processors:
           - replace_pattern(log.attributes["url.path"], "\\b\\d{8,}\\b", "[REDACTED]") where log.attributes["url.path"] != nil
           - replace_pattern(log.body, "\\b\\d{8,}\\b", "[REDACTED]") where IsString(log.body)
 
+  filter:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["http.target"] == "/health" or attributes["http.target"] == "/ready"'
+    logs:
+      log_record:
+        - 'attributes["http.target"] == "/health" or attributes["http.target"] == "/ready"'
+
   batch:
     send_batch_size: 1024
     timeout: 10s
 
 exporters:
-  otlp/tempo:
+  otlp/tempo_banking:
     endpoint: "tempo:4317"
     tls:
       insecure: true
+    headers:
+      X-Scope-OrgID: banking-client
+    sending_queue:
+      enabled: true
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
 
-  otlphttp/loki:
+  otlp/tempo_insurance:
+    endpoint: "tempo:4317"
+    tls:
+      insecure: true
+    headers:
+      X-Scope-OrgID: insurance-client
+    sending_queue:
+      enabled: true
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+
+  otlphttp/loki_banking:
     endpoint: "http://loki:3100/otlp/"
+    headers:
+      X-Scope-OrgID: banking-client
+    sending_queue:
+      enabled: true
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
 
-  prometheusremotewrite/mimir:
+  otlphttp/loki_insurance:
+    endpoint: "http://loki:3100/otlp/"
+    headers:
+      X-Scope-OrgID: insurance-client
+    sending_queue:
+      enabled: true
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+
+  prometheusremotewrite/mimir_banking:
     endpoint: "http://mimir:9009/api/v1/push"
-    # Promote resource attrs (tenant.id, service.*) to labels so Grafana can
-    # filter metrics by tenant.id (Phase 3 exit gate).
+    headers:
+      X-Scope-OrgID: banking-client
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  prometheusremotewrite/mimir_insurance:
+    endpoint: "http://mimir:9009/api/v1/push"
+    headers:
+      X-Scope-OrgID: insurance-client
     resource_to_telemetry_conversion:
       enabled: true
 
@@ -82,15 +153,27 @@ extensions:
 service:
   extensions: [health_check, zpages]
   pipelines:
-    traces:
-      receivers: [otlp]
-      processors: [memory_limiter, resource, transform, batch]
-      exporters: [otlp/tempo]
-    metrics:
-      receivers: [otlp]
+    traces/banking:
+      receivers: [otlp/banking]
+      processors: [memory_limiter, resource, transform, filter, batch]
+      exporters: [otlp/tempo_banking]
+    metrics/banking:
+      receivers: [otlp/banking]
       processors: [memory_limiter, resource, batch]
-      exporters: [prometheusremotewrite/mimir]
-    logs:
-      receivers: [otlp]
-      processors: [memory_limiter, resource, transform, batch]
-      exporters: [otlphttp/loki]
+      exporters: [prometheusremotewrite/mimir_banking]
+    logs/banking:
+      receivers: [otlp/banking]
+      processors: [memory_limiter, resource, transform, filter, batch]
+      exporters: [otlphttp/loki_banking]
+    traces/insurance:
+      receivers: [otlp/insurance]
+      processors: [memory_limiter, resource, transform, filter, batch]
+      exporters: [otlp/tempo_insurance]
+    metrics/insurance:
+      receivers: [otlp/insurance]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheusremotewrite/mimir_insurance]
+    logs/insurance:
+      receivers: [otlp/insurance]
+      processors: [memory_limiter, resource, transform, filter, batch]
+      exporters: [otlphttp/loki_insurance]

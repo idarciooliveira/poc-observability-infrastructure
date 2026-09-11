@@ -38,7 +38,7 @@ creating missing `.env` files from `.env.example` on first run. The root
 `.env` is the single source of truth for `BANKING_TOKEN`/`INSURANCE_TOKEN` —
 the scripts export them so gateway and clients always agree (FR-06).
 
-Endpoints: Grafana http://localhost:3000 (`admin`/`admin`), Banking API
+Endpoints: Grafana http://localhost:3000 (creds from root `.env`: `GF_ADMIN_USER`/`GF_ADMIN_PASSWORD`), Banking API
 http://localhost:8080, Insurance API http://localhost:8083.
 
 ```powershell

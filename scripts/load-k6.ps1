@@ -1,4 +1,4 @@
-# Generate sustained realistic traffic with k6 (grafana/k6 in Docker, no local install).
+﻿# Generate sustained realistic traffic with k6 (grafana/k6 in Docker, no local install).
 # Usage: .\scripts\load-k6.ps1 [-DurationMin 5] [-Vus 10] [-Chaos off|latency|rejects]
 #   -DurationMin  steady-load minutes (ramp is +2m, or +1m when <= 2)
 #   -Vus          virtual users PER scenario (banking + insurance run together)
@@ -37,6 +37,12 @@ Notes:
   k6 runs in Docker (grafana/k6) on the default bridge network via
   http://host.docker.internal:8080|:8083 (Docker Desktop resolves it;
   native-Linux Engine may need extra_hosts, see compose comments).
+  Backends enforce X-Scope-OrgID (multitenancy): if dashboards stay empty
+  after enabling it, reset volumes once (.\scripts\down.ps1 -Volumes) and
+  re-run load to repopulate both tenants. Operator DS are federated
+  (banking-client|insurance-client); Loki-banking/-insurance etc. prove
+  isolation in Explore. Services have mem limits - watch `docker stats`
+  on high -Vus runs.
 '@
   exit 0
 }
@@ -105,10 +111,15 @@ function Set-Chaos($Latency, $Rate) {
 
 Write-Host "== banking =="
 if (Wait-Tcp 8080 5) { Write-Host "ok 127.0.0.1:8080 (banking-api)" }
-else { Write-Warning "127.0.0.1:8080 not reachable — start the stack first: .\scripts\up.ps1" }
+else { Write-Warning "127.0.0.1:8080 not reachable - start the stack first: .\scripts\up.ps1" }
 Write-Host "== insurance =="
 if (Wait-Tcp 8083 5) { Write-Host "ok 127.0.0.1:8083 (insurance-api)" }
-else { Write-Warning "127.0.0.1:8083 not reachable — start the stack first: .\scripts\up.ps1" }
+else { Write-Warning "127.0.0.1:8083 not reachable - start the stack first: .\scripts\up.ps1" }
+Write-Host "== pipeline (gateway must accept OTLP or load runs blind) =="
+foreach ($p in 4317, 4318, 4320, 4321) {
+  if (Wait-Tcp $p 5) { Write-Host "ok 127.0.0.1:$p" }
+  else { Write-Warning "127.0.0.1:$p not reachable - telemetry will be dropped (see docker compose ps/logs)" }
+}
 
 # Chaos set-up (no rebuild needed: services read CHAOS_* envs on restart).
 if ($Chaos -eq "latency") { Set-Chaos "2500" "0" }
@@ -117,7 +128,7 @@ elseif ($Chaos -eq "rejects") { Set-Chaos "0" "0.3" }
 $K6Exit = 0
 try {
   Write-Host "== k6 (banking + insurance, Vus=$Vus steady=${DurationMin}m ramp=${RampMin}m chaos=$Chaos) =="
-  # NOTE: full arg array again — never splat a single string (see up.ps1).
+  # NOTE: full arg array again - never splat a single string (see up.ps1).
   $k6Args = @(
     "run", "--rm", "-i",
     "--network", "bridge",

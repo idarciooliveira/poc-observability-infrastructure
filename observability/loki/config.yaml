@@ -1,15 +1,18 @@
-# Loki 3.7.6 — Phase 3 single-node, filesystem storage.
+# Loki 3.7.6 — single-node, filesystem storage.
 #
-# Phase 3 simplification: single tenant (auth_enabled: false). Real tenant
-# isolation needs auth_enabled: true + X-Scope-OrgID per tenant and per-tenant
-# retention/limits — revisited in Phase 6. Do not rely on this for isolation.
+# Prod hardening #1: true storage isolation via auth_enabled: true.
+# Every push/query must carry X-Scope-OrgID (banking-client | insurance-client).
+# The collector sets it per-tenant (see collector-config.yaml); Grafana
+# operator datasources use the federated value "banking-client|insurance-client"
+# (requires multi_tenant_queries_enabled below), per-tenant datasources use a
+# single ID to prove isolation. NOTE: pre-existing data written under
+# auth_enabled:false lives under tenant "fake" and becomes invisible — reset
+# volumes once after enabling (scripts/down -Volumes).
 #
 # Store note: tsdb/v13 is REQUIRED for native OTLP ingestion + structured
-# metadata on Loki 3.x — the plan's boltdb-shipper cannot serve the Step 2
-# otlphttp->Loki design, so it is dropped here (plan deviation, forced by Loki
-# validation, not preference).
+# metadata on Loki 3.x.
 
-auth_enabled: false
+auth_enabled: true
 
 server:
   http_listen_port: 3100
@@ -35,6 +38,11 @@ schema_config:
       index:
         prefix: index_
         period: 24h
+
+querier:
+  # Operator (Grafana) can query banking-client|insurance-client in one call.
+  # Push (/otlp) still requires a SINGLE tenant — federation is query-only.
+  multi_tenant_queries_enabled: true
 
 compactor:
   working_directory: /loki/compactor
