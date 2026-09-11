@@ -49,3 +49,14 @@ limits_config:
   allow_structured_metadata: true
   reject_old_samples: true
   reject_old_samples_max_age: 168h
+  # Phase 8 fix: custom resource attributes land in structured metadata by
+  # default, which stream selectors ({tenant_id="..."}) cannot match — the
+  # tenant log panels would silently show nothing. Promote tenant.id to a
+  # real index label (dots become underscores). Applies to NEW streams only;
+  # pre-fix history stays searchable via service_name + metadata filters.
+  otlp_config:
+    resource_attributes:
+      attributes_config:
+        - action: index_label
+          attributes:
+            - tenant.id

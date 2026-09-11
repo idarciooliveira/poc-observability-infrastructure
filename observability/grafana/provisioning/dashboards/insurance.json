@@ -49,14 +49,15 @@
     },
     {
       "id": 4,
-      "title": "p95 claim processing latency",
+      "title": "Max claim processing latency",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
       "datasource": { "type": "prometheus", "uid": "mimir_ds" },
+      "description": "Max (not p95): the OTel-translated business timers carry only a +Inf bucket, so histogram_quantile is NaN. Max still shows latency spikes (e.g. chaos injection).",
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(insurance_claim_duration_seconds_bucket{tenant_id=\"insurance-client\"}[$__rate_interval])))",
-          "legendFormat": "p95 claim.evaluate",
+          "expr": "max(insurance_claim_duration_max_seconds{tenant_id=\"insurance-client\"})",
+          "legendFormat": "max claim.evaluate",
           "refId": "A"
         }
       ],
@@ -64,14 +65,14 @@
     },
     {
       "id": 5,
-      "title": "p95 risk-evaluation latency",
+      "title": "Max risk-evaluation latency",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "datasource": { "type": "prometheus", "uid": "mimir_ds" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(insurance_risk_duration_seconds_bucket{tenant_id=\"insurance-client\"}[$__rate_interval])))",
-          "legendFormat": "p95 risk.evaluate",
+          "expr": "max(insurance_risk_duration_max_seconds{tenant_id=\"insurance-client\"})",
+          "legendFormat": "max risk.evaluate",
           "refId": "A"
         }
       ],

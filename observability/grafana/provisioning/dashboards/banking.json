@@ -49,14 +49,15 @@
     },
     {
       "id": 4,
-      "title": "p95 transfer latency",
+      "title": "Max transfer latency",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
       "datasource": { "type": "prometheus", "uid": "mimir_ds" },
+      "description": "Max (not p95): the OTel-translated business timers carry only a +Inf bucket, so histogram_quantile is NaN. Max still shows latency spikes (e.g. chaos injection).",
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(bank_transfer_duration_seconds_bucket{tenant_id=\"banking-client\"}[$__rate_interval])))",
-          "legendFormat": "p95 transfer",
+          "expr": "max(bank_transfer_duration_max_seconds{tenant_id=\"banking-client\"})",
+          "legendFormat": "max transfer",
           "refId": "A"
         }
       ],
@@ -64,14 +65,15 @@
     },
     {
       "id": 5,
-      "title": "p95 fraud-check latency",
+      "title": "Max fraud-check latency",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "datasource": { "type": "prometheus", "uid": "mimir_ds" },
+      "description": "Max (not p95): see transfer latency note above.",
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(bank_fraud_duration_seconds_bucket{tenant_id=\"banking-client\"}[$__rate_interval])))",
-          "legendFormat": "p95 fraud.check",
+          "expr": "max(bank_fraud_duration_max_seconds{tenant_id=\"banking-client\"})",
+          "legendFormat": "max fraud.check",
           "refId": "A"
         }
       ],

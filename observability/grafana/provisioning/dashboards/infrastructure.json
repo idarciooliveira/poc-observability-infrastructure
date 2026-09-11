@@ -80,13 +80,14 @@
     },
     {
       "id": 6,
-      "title": "Error logs by service",
+      "title": "Warnings & errors by service",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
       "datasource": { "type": "loki", "uid": "loki_ds" },
+      "description": "Handled business failures (422s) log at warn, not error — error-only would sit empty until an unhandled 500 occurs. detected_level is metadata, not an index label, so streams are selected by service_name first.",
       "targets": [
         {
-          "expr": "sum by (service_name) (count_over_time({detected_level=\"error\"}[$__interval]))",
+          "expr": "sum by (service_name) (count_over_time({service_name=~\".+\"} | detected_level=~\"error|warn\" [$__interval]))",
           "legendFormat": "{{service_name}}",
           "refId": "A"
         }
