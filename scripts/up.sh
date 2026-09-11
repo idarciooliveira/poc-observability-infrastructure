@@ -109,7 +109,7 @@ fi
 cat <<'EOF'
 
 All stacks started:
-  Grafana       http://localhost:3000  (admin/admin)
+  Grafana       http://localhost:3000
   Banking API   http://localhost:8080
   Fraud svc     http://localhost:8081
   Insurance API http://localhost:8083  (container :8080)

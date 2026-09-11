@@ -1,0 +1,568 @@
+openapi: 3.0.3
+info:
+  title: POC Observability Infrastructure — All Services
+  description: |-
+    Single OpenAPI covering every HTTP endpoint in the POC so it can be
+    imported into Postman / Insomnia / any HTTP client.
+
+    Stacks (default local ports, see docker-compose files):
+    - banking-api    -> http://localhost:8080  (POST /transfers, /accounts)
+    - fraud-service  -> http://localhost:8081  (POST /fraud-check, internal)
+    - insurance-api  -> http://localhost:8083  (container 8080; POST /policies/{id}/claims)
+    - risk-service   -> http://localhost:8082  (POST /risk-check, internal)
+    - grafana        -> http://localhost:3000  (admin/admin)
+    - OTLP/HTTP banking   -> http://localhost:4318 (/v1/traces|metrics|logs)
+    - OTLP/HTTP insurance -> http://localhost:4321 (/v1/traces|metrics|logs)
+    - OTLP/gRPC banking   -> http://localhost:4317 (gRPC, not plain HTTP)
+    - OTLP/gRPC insurance -> http://localhost:4320 (gRPC, not plain HTTP)
+
+    Seed data (see */src/main/resources/data.sql):
+    - Accounts: BANK-0001 (5000.00), BANK-0002 (1500.00), BANK-0003 (50000.00, for fraud-reject demo)
+    - Policies: b1c2e8d0-2222-4b3b-8d2b-000000000001 ACTIVE 100000 (Alice),
+                b1c2e8d0-2222-4b3b-8d2b-000000000002 ACTIVE 50000 (Bob),
+                b1c2e8d0-2222-4b3b-8d2b-000000000003 INACTIVE 75000 (Charlie)
+
+    Failure triggers (PRD §4):
+    - Fraud reject (>= 10000): BANK-0003 -> any, amount 15000
+    - Insufficient balance: BANK-0002 amount 5000
+    - Account not found: source NOPE-9999
+    - Policy inactive: policy ...000003
+    - Coverage exceeded: policy ...000002 (limit 50000) amount 60000
+    - Risk reject high_value (> 50000): policy ...000001 amount 60000
+    - Risk reject coverage_exhaustion (> 80% limit): policy ...000001 amount 85000
+    - Validation error: amount 0 / missing field
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+    description: banking-api
+  - url: http://localhost:8081
+    description: fraud-service (internal to client-banking network)
+  - url: http://localhost:8083
+    description: insurance-api (container serves 8080)
+  - url: http://localhost:8082
+    description: risk-service (internal to client-insurance network)
+  - url: http://localhost:3000
+    description: grafana (admin/admin)
+  - url: http://localhost:4318
+    description: OTLP/HTTP gateway — banking listener
+  - url: http://localhost:4321
+    description: OTLP/HTTP gateway — insurance listener
+tags:
+  - name: banking
+    description: digital-banking-services (banking-api :8080)
+  - name: fraud
+    description: fraud-service (:8081, internal)
+  - name: insurance
+    description: insurance-services (insurance-api :8083)
+  - name: risk
+    description: risk-service (:8082, internal)
+  - name: actuator
+    description: Spring Boot actuator (health/info/metrics on every Java service)
+  - name: grafana
+    description: Observability UI + API (:3000, admin/admin)
+  - name: otlp-http
+    description: OTLP/HTTP ingestion via gateway (:4318 banking, :4321 insurance)
+paths:
+  # ── Banking ──────────────────────────────────────────────
+  /transfers:
+    post:
+      tags: [banking]
+      summary: Create transfer (banking-api :8080)
+      description: |-
+        Core business op: POST /transfers -> account validation -> balance validation
+        -> fraud check (fraud-service) -> debit/credit.
+        201 on success. 404 account not found. 422 insufficient balance / fraud rejected /
+        illegal args. 400 validation. Trace: banking-api -> fraud-service -> postgres.
+      operationId: createTransfer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferRequest'
+            examples:
+              happy-path:
+                value: {sourceAccountNumber: BANK-0001, destinationAccountNumber: BANK-0002, amount: 100.00}
+              fraud-reject:
+                value: {sourceAccountNumber: BANK-0003, destinationAccountNumber: BANK-0001, amount: 15000.00}
+              insufficient-balance:
+                value: {sourceAccountNumber: BANK-0002, destinationAccountNumber: BANK-0001, amount: 5000.00}
+              account-not-found:
+                value: {sourceAccountNumber: NOPE-9999, destinationAccountNumber: BANK-0001, amount: 10.00}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /transfers/{id}:
+    get:
+      tags: [banking]
+      summary: Get transfer by id (banking-api :8080)
+      operationId: getTransfer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /accounts:
+    post:
+      tags: [banking]
+      summary: Create account (banking-api :8080)
+      operationId: createAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountRequest'
+            example: {accountNumber: BANK-9001, balance: 1000.00}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          description: Account already exists
+          content:
+            text/plain:
+              schema: {type: string}
+  /accounts/{accountNumber}:
+    get:
+      tags: [banking]
+      summary: Get account by number (banking-api :8080)
+      operationId: getAccount
+      parameters:
+        - name: accountNumber
+          in: path
+          required: true
+          schema: {type: string}
+          example: BANK-0001
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Fraud (internal) ─────────────────────────────────────
+  /fraud-check:
+    post:
+      tags: [fraud]
+      summary: Fraud check (fraud-service :8081, internal)
+      description: |-
+        Direct call to fraud-service. Normally invoked by banking-api.
+        Rejects amounts >= 10000 (suspicious_amount). CHAOS_LATENCY_MS /
+        CHAOS_REJECT_RATE envs force latency / chaos_forced rejections.
+      operationId: checkFraud
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FraudCheckRequest'
+            examples:
+              approve:
+                value: {sourceAccountNumber: BANK-0001, amount: 100.00}
+              reject:
+                value: {sourceAccountNumber: BANK-0003, amount: 15000.00}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FraudCheckResponse'
+
+  # ── Insurance ────────────────────────────────────────────
+  /policies/{policyId}/claims:
+    post:
+      tags: [insurance]
+      summary: Create claim (insurance-api :8083)
+      description: |-
+        Core business op: POST /policies/{id}/claims -> policy validation ->
+        coverage validation -> risk evaluation (risk-service) -> claim creation.
+        201 on success. 404 policy not found. 422 policy inactive / coverage
+        exceeded / risk rejected / illegal args. 400 validation.
+      operationId: createClaim
+      parameters:
+        - name: policyId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+          example: b1c2e8d0-2222-4b3b-8d2b-000000000001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimRequest'
+            examples:
+              happy-path:
+                value: {amount: 1000.00}
+              risk-high-value-reject:
+                value: {amount: 60000.00}
+              coverage-exceeded:
+                value: {amount: 60000.00}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+
+  # ── Risk (internal) ──────────────────────────────────────
+  /risk-check:
+    post:
+      tags: [risk]
+      summary: Risk assessment (risk-service :8082, internal)
+      description: |-
+        Direct call to risk-service. Normally invoked by insurance-api.
+        Rejects claimAmount > 50000 (high_value) or claimAmount > 80% of
+        coverageLimit (coverage_exhaustion). CHAOS_* envs force chaos_forced.
+      operationId: checkRisk
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RiskCheckRequest'
+            examples:
+              approve:
+                value: {policyId: b1c2e8d0-2222-4b3b-8d2b-000000000001, claimAmount: 1000.00, coverageLimit: 100000.00}
+              high-value-reject:
+                value: {policyId: b1c2e8d0-2222-4b3b-8d2b-000000000001, claimAmount: 60000.00, coverageLimit: 100000.00}
+              exhaustion-reject:
+                value: {policyId: b1c2e8d0-2222-4b3b-8d2b-000000000001, claimAmount: 85000.00, coverageLimit: 100000.00}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskCheckResponse'
+
+  # ── Actuator (all 4 Java services) ───────────────────────
+  /actuator/health:
+    get:
+      tags: [actuator]
+      summary: Actuator health (any Java service — set base URL per service)
+      description: banking :8080, fraud :8081, risk :8082, insurance :8083.
+      operationId: actuatorHealth
+      responses:
+        '200':
+          description: Health payload
+          content:
+            application/json:
+              schema: {type: object}
+  /actuator/info:
+    get:
+      tags: [actuator]
+      summary: Actuator info (any Java service)
+      operationId: actuatorInfo
+      responses:
+        '200':
+          description: Info payload
+          content:
+            application/json:
+              schema: {type: object}
+  /actuator/metrics:
+    get:
+      tags: [actuator]
+      summary: List meter names (any Java service)
+      operationId: actuatorMetricsList
+      responses:
+        '200':
+          description: Meter names
+          content:
+            application/json:
+              schema: {type: object}
+  /actuator/metrics/{requiredMetricName}:
+    get:
+      tags: [actuator]
+      summary: Meter detail (any Java service)
+      description: |-
+        Try bank.transfers.total, bank.transfers.success, bank.transfers.failed,
+        bank.fraud.rejected, insurance.claims.total, insurance.claims.approved,
+        insurance.claims.rejected, jvm.memory.used, http.server.requests, etc.
+      operationId: actuatorMetricDetail
+      parameters:
+        - name: requiredMetricName
+          in: path
+          required: true
+          schema: {type: string}
+          example: bank.transfers.total
+      responses:
+        '200':
+          description: Meter detail
+          content:
+            application/json:
+              schema: {type: object}
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Grafana ──────────────────────────────────────────────
+  /api/health:
+    get:
+      tags: [grafana]
+      summary: Grafana health (:3000, no auth)
+      operationId: grafanaHealth
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object}
+  /api/search:
+    get:
+      tags: [grafana]
+      summary: Search dashboards (:3000, basic admin/admin)
+      operationId: grafanaSearch
+      parameters:
+        - name: query
+          in: query
+          schema: {type: string}
+          example: banking
+      responses:
+        '200':
+          description: Dashboards
+          content:
+            application/json:
+              schema: {type: array, items: {type: object}}
+  /api/datasources:
+    get:
+      tags: [grafana]
+      summary: List datasources (:3000, basic admin/admin)
+      operationId: grafanaDatasources
+      responses:
+        '200':
+          description: Datasources (Loki, Tempo, Mimir provisioned)
+          content:
+            application/json:
+              schema: {type: array, items: {type: object}}
+  /api/dashboards/uid/{uid}:
+    get:
+      tags: [grafana]
+      summary: Get dashboard by uid (:3000, basic admin/admin)
+      operationId: grafanaDashboard
+      parameters:
+        - name: uid
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Dashboard
+          content:
+            application/json:
+              schema: {type: object}
+  /api/ds/query:
+    post:
+      tags: [grafana]
+      summary: Grafana datasource query API (:3000, basic admin/admin)
+      description: Unified query endpoint for Loki/Tempo/Mimir via datasource uid.
+      operationId: grafanaDsQuery
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object}
+            example:
+              queries:
+                - refId: A
+                  datasource: {type: loki, uid: loki}
+                  expr: '{service_namespace="banking"}'
+      responses:
+        '200':
+          description: Query result
+          content:
+            application/json:
+              schema: {type: object}
+  /api/prometheus/grafana/api/v1/query:
+    get:
+      tags: [grafana]
+      summary: Mimir instant query via Grafana proxy (:3000, basic admin/admin)
+      operationId: mimirInstantQuery
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema: {type: string}
+          example: 'sum(rate(bank_transfers_total[5m]))'
+      responses:
+        '200':
+          description: Prometheus-format result
+          content:
+            application/json:
+              schema: {type: object}
+
+  # ── OTLP/HTTP ingestion ──────────────────────────────────
+  /v1/traces:
+    post:
+      tags: [otlp-http]
+      summary: OTLP/HTTP traces (gateway :4318 banking / :4321 insurance)
+      description: |-
+        Send OTLP/HTTP protobuf or JSON with header Authorization: Bearer <TENANT_TOKEN>.
+        Banking token -> :4318, insurance token -> :4321. Use Postman raw binary or JSON.
+      operationId: otlpTraces
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object}
+            example: {resourceSpans: []}
+      responses:
+        '200':
+          description: Accepted (partialSuccess object)
+          content:
+            application/json:
+              schema: {type: object}
+  /v1/metrics:
+    post:
+      tags: [otlp-http]
+      summary: OTLP/HTTP metrics (gateway :4318 banking / :4321 insurance)
+      operationId: otlpMetrics
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object}
+            example: {resourceMetrics: []}
+      responses:
+        '200':
+          description: Accepted
+          content:
+            application/json:
+              schema: {type: object}
+  /v1/logs:
+    post:
+      tags: [otlp-http]
+      summary: OTLP/HTTP logs (gateway :4318 banking / :4321 insurance)
+      operationId: otlpLogs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object}
+            example: {resourceLogs: []}
+      responses:
+        '200':
+          description: Accepted
+          content:
+            application/json:
+              schema: {type: object}
+
+components:
+  schemas:
+    TransferRequest:
+      type: object
+      required: [sourceAccountNumber, destinationAccountNumber, amount]
+      properties:
+        sourceAccountNumber: {type: string, example: BANK-0001}
+        destinationAccountNumber: {type: string, example: BANK-0002}
+        amount: {type: number, format: double, minimum: 0.01, example: 100.00}
+    TransferResponse:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        sourceAccountNumber: {type: string}
+        destinationAccountNumber: {type: string}
+        amount: {type: number, format: double}
+        createdAt: {type: string, format: date-time}
+        status: {type: string, example: COMPLETED}
+    AccountRequest:
+      type: object
+      required: [accountNumber, balance]
+      properties:
+        accountNumber: {type: string, example: BANK-9001}
+        balance: {type: number, format: double, minimum: 0, example: 1000.00}
+    AccountResponse:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        accountNumber: {type: string}
+        balance: {type: number, format: double}
+    ClaimRequest:
+      type: object
+      required: [amount]
+      properties:
+        amount: {type: number, format: double, minimum: 0.01, example: 1000.00}
+    ClaimResponse:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        policyId: {type: string, format: uuid}
+        amount: {type: number, format: double}
+        status: {type: string, example: APPROVED}
+        createdAt: {type: string, format: date-time}
+    FraudCheckRequest:
+      type: object
+      required: [sourceAccountNumber, amount]
+      properties:
+        sourceAccountNumber: {type: string, example: BANK-0001}
+        amount: {type: number, format: double, example: 100.00}
+    FraudCheckResponse:
+      type: object
+      properties:
+        approved: {type: boolean, example: true}
+    RiskCheckRequest:
+      type: object
+      required: [policyId, claimAmount, coverageLimit]
+      properties:
+        policyId: {type: string, format: uuid, example: b1c2e8d0-2222-4b3b-8d2b-000000000001}
+        claimAmount: {type: number, format: double, example: 1000.00}
+        coverageLimit: {type: number, format: double, example: 100000.00}
+    RiskCheckResponse:
+      type: object
+      properties:
+        approved: {type: boolean, example: true}
+        reason: {type: string, example: approved}
+  responses:
+    NotFound:
+      description: Not found (plain-text message)
+      content:
+        text/plain:
+          schema: {type: string}
+    Unprocessable:
+      description: Business rejection, 422 (plain-text message)
+      content:
+        text/plain:
+          schema: {type: string}
+    ValidationError:
+      description: Bean-validation failure, 400
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: {type: string}
+            example: {amount: must be greater than or equal to 0.01}

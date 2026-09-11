@@ -4,12 +4,13 @@
   "tags": ["poc", "phase-8"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "templating": {
     "list": [
       {
         "name": "tenant",
         "type": "query",
+        "refresh": 1,
         "datasource": { "type": "prometheus", "uid": "mimir_ds" },
         "definition": "label_values(tenant_id)",
         "includeAll": true,

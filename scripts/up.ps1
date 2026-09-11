@@ -88,7 +88,7 @@ foreach ($p in 4317, 4318, 4320, 4321, 3000) {
 @'
 
 All stacks started:
-  Grafana       http://localhost:3000  (admin/admin)
+  Grafana       http://localhost:3000
   Banking API   http://localhost:8080
   Fraud svc     http://localhost:8081
   Insurance API http://localhost:8083  (container :8080)
