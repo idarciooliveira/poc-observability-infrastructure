@@ -1,0 +1,92 @@
+services:
+  retail-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: retail-orders-api
+    ports:
+      - "${RETAIL_API_PORT:-8084}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      client-collector-retail-orders:
+        condition: service_started
+    networks:
+      # Ch.2 rule: app joins ONLY its customer network. No otel-ingress,
+      # no direct path to Traefik/gateway/storage.
+      - client-retail-orders
+    environment:
+      # Database
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-retail_orders}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-retail_orders}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-retail_orders}
+      # OpenTelemetry: OTLP/gRPC to the LOCAL client collector (plaintext).
+      # No token, no CA here — the collector owns the platform leg.
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-retail-api}
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=retail,tenant.id=retail-client,deployment.environment=${ENV:-dev}
+      OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-otlp}
+      OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-otlp}
+      OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-otlp}
+      OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-15000}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://client-collector-retail-orders:4317}
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      # Micrometer meters (OrderMetrics: retail.orders.*) are NOT bridged
+      # into OTLP by default — this opts the agent in.
+      OTEL_INSTRUMENTATION_MICROMETER_ENABLED: "true"
+      # Fault injection (investigation demos). 0/0 = off.
+      CHAOS_LATENCY_MS: ${CHAOS_LATENCY_MS:-0}
+      CHAOS_FAIL_RATE: ${CHAOS_FAIL_RATE:-0}
+
+  client-collector-retail-orders:
+    image: otel/opentelemetry-collector-contrib:0.135.0
+    container_name: client-collector-retail-orders
+    # File-backed queue volume arrives root-owned and the image runs non-root;
+    # root here mirrors the tempo concession in the root compose (local-POC only).
+    user: "0"
+    command: ["--config=/etc/otel/collector-config.yaml"]
+    volumes:
+      - ./client-collector-retail-orders/collector-config.yaml:/etc/otel/collector-config.yaml:ro
+      - ../../observability/traefik/certs/ca.crt:/certs/ca.crt:ro
+      - retail-collector-queue:/var/lib/otelcol
+    networks:
+      - client-retail-orders
+      - otel-ingress
+    environment:
+      # Must match RETAIL_TOKEN in the root observability .env (gateway lane).
+      RETAIL_TOKEN: ${RETAIL_TOKEN:?RETAIL_TOKEN must be set}
+    # Distroless: no shell for healthcheck — readiness via collector logs
+    # ("Everything is ready") and downstream export success.
+    healthcheck:
+      test: ["NONE"]
+    # No host ports — OTLP receiver only on the customer network;
+    # egress only via otel-ingress to Traefik :443.
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: retail-orders-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-retail_orders}
+      POSTGRES_USER: ${POSTGRES_USER:-retail_orders}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-retail_orders}
+    ports:
+      - "${POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - retail-orders-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-retail_orders} -d ${POSTGRES_DB:-retail_orders}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - client-retail-orders
+
+volumes:
+  retail-orders-postgres-data:
+  retail-collector-queue:
+
+networks:
+  client-retail-orders:
+    name: client-retail-orders
+  otel-ingress:
+    external: true
+    name: otel-ingress

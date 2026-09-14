@@ -1,0 +1,102 @@
+# client-collector-retail-orders (contrib 0.135.0) — Ch.2 customer-side collector.
+#
+# Lives in the customer bundle: retail-api sends OTLP here (plaintext, no auth
+# — reachable only inside `client-retail-orders`). This collector does early
+# filtering/buffering, then forwards via Traefik :443 to the central gateway,
+# which authenticates RETAIL_TOKEN and OVERWRITES tenant.id server-side.
+# This collector is NEVER trusted as a security boundary.
+#
+# Token comes from container env (RETAIL_TOKEN, see customer .env.example).
+# Must match RETAIL_TOKEN in the root observability .env (gateway retail lane).
+
+extensions:
+  health_check:
+  file_storage:
+    directory: /var/lib/otelcol
+  bearertokenauth/platform:
+    # Injects `Authorization: Bearer <RETAIL_TOKEN>` on the platform leg
+    # (gRPC + HTTP) so the token never lives in this committed file.
+    token: "${env:RETAIL_TOKEN}"
+
+receivers:
+  # Plaintext, no auth: only retail-api can reach this (customer network).
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"
+      http:
+        endpoint: "0.0.0.0:4318"
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+
+  # Drop health/readiness noise before it leaves the customer network.
+  filter:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["http.target"] == "/health" or attributes["http.target"] == "/ready"'
+        - 'attributes["http.route"] == "/health" or attributes["http.route"] == "/ready"'
+    logs:
+      log_record:
+        - 'attributes["http.target"] == "/health" or attributes["http.target"] == "/ready"'
+
+  # Early, best-effort PII scrub: digit runs of 8+ (fake account/order refs)
+  # in attributes and log bodies. The internal collector re-scrubs
+  # authoritatively — this only reduces what leaves the customer network.
+  transform:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - replace_pattern(span.attributes["url.path"], "\\b\\d{8,}\\b", "[REDACTED]") where span.attributes["url.path"] != nil
+          - replace_pattern(span.attributes["http.target"], "\\b\\d{8,}\\b", "[REDACTED]") where span.attributes["http.target"] != nil
+    log_statements:
+      - context: log
+        statements:
+          - replace_pattern(log.attributes["url.path"], "\\b\\d{8,}\\b", "[REDACTED]") where log.attributes["url.path"] != nil
+          - replace_pattern(log.body, "\\b\\d{8,}\\b", "[REDACTED]") where IsString(log.body)
+
+  batch:
+    send_batch_size: 1024
+    timeout: 10s
+
+exporters:
+  # Sole egress: via Traefik :443 (SNI retail-otlp.localhost), TLS terminated
+  # at Traefik with the platform CA mounted at /certs/ca.crt. Auth via
+  # bearertokenauth/platform extension. File-backed queue buffers gateway/WAN
+  # outages — the core Ch.2 resilience comparison vs direct export.
+  otlp/platform:
+    endpoint: "https://retail-otlp.localhost:443"
+    tls:
+      ca_file: /certs/ca.crt
+    auth:
+      authenticator: bearertokenauth/platform
+    sending_queue:
+      enabled: true
+      storage: file_storage
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+
+service:
+  extensions: [health_check, file_storage, bearertokenauth/platform]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, filter, transform, batch]
+      exporters: [otlp/platform]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/platform]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, filter, transform, batch]
+      exporters: [otlp/platform]
