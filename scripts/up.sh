@@ -56,12 +56,33 @@ if [ -z "${BANKING_TOKEN:-}" ] || [ -z "${INSURANCE_TOKEN:-}" ]; then
   exit 1
 fi
 export BANKING_TOKEN INSURANCE_TOKEN
-# Prod hardening #4: Grafana admin comes from the same root .env.
+# Prod hardening #4: Grafana admin comes from the same root .env (fail closed).
 GF_ADMIN_USER="$(get_env_value "$ROOT/.env" GF_ADMIN_USER)"
 GF_ADMIN_PASSWORD="$(get_env_value "$ROOT/.env" GF_ADMIN_PASSWORD)"
-[ -z "${GF_ADMIN_USER:-}" ] && GF_ADMIN_USER="admin"
-[ -z "${GF_ADMIN_PASSWORD:-}" ] && GF_ADMIN_PASSWORD="admin"
+if [ -z "${GF_ADMIN_USER:-}" ] || [ -z "${GF_ADMIN_PASSWORD:-}" ]; then
+  echo "ERROR: GF_ADMIN_USER / GF_ADMIN_PASSWORD missing in $ROOT/.env" >&2
+  exit 1
+fi
 export GF_ADMIN_USER GF_ADMIN_PASSWORD
+
+# 2b. Local simulation TLS cert (self-signed *.localhost, committed certs are
+# for local simulation only). Regenerate if missing (fresh clone without certs).
+CERT_DIR="$ROOT/observability/traefik/certs"
+if [ ! -f "$CERT_DIR/edge.crt" ] || [ ! -f "$CERT_DIR/edge.key" ]; then
+  echo "== generating local edge TLS cert (*.localhost, simulation only) =="
+  mkdir -p "$CERT_DIR"
+  openssl req -x509 -newkey rsa:2048 -keyout "$CERT_DIR/edge.key" -out "$CERT_DIR/edge.crt" \
+    -days 365 -nodes -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost,DNS:*.localhost,DNS:banking-otlp.localhost,DNS:banking-http-otlp.localhost,DNS:insurance-otlp.localhost,DNS:insurance-http-otlp.localhost,DNS:grafana.localhost,DNS:traefik"
+  cp "$CERT_DIR/edge.crt" "$CERT_DIR/ca.crt"
+fi
+
+# 2c. Host DNS: *.localhost must resolve to 127.0.0.1 for browser/k6.
+for h in grafana.localhost banking-otlp.localhost insurance-otlp.localhost; do
+  if ! python3 -c "import socket; socket.gethostbyname('$h')" 2>/dev/null; then
+    echo "WARNING: $h does not resolve — add '127.0.0.1 $h' to /etc/hosts (or C:\\Windows\\System32\\drivers\\etc\\hosts)" >&2
+  fi
+done
 
 echo "NOTE: storage isolation is now enforced (Loki/Mimir/Tempo multitenancy)."
 echo "If upgrading from a pre-multitenancy stack, run ./scripts/down.sh --volumes once — old data under tenant fake/anonymous is invisible."
@@ -71,16 +92,7 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-# host.docker.internal resolves out of the box on Docker Desktop only.
-if [ "$(uname -s 2>/dev/null || echo unknown)" = "Linux" ] \
-   && [ -z "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" ]; then
-  echo "NOTE (Linux/native Docker): host.docker.internal may not resolve."
-  echo "If banking/insurance fail to export telemetry, add"
-  echo "  extra_hosts: [\"host.docker.internal:host-gateway\"]"
-  echo "to the app services (see compose comments) and re-run."
-fi
-
-# 3. Start in dependency order: gateway first, clients second.
+# 3. Start in dependency order: platform first, clients second.
 echo "== observability =="
 docker compose -f "$OBS" up -d $BUILD
 echo "== banking =="
@@ -103,7 +115,7 @@ wait_tcp() {
   return 1
 }
 if command -v python3 >/dev/null 2>&1; then
-  for p in 4317 4318 4320 4321 3000; do
+  for p in 443 8080 8083; do
     if wait_tcp 127.0.0.1 "$p" 30; then
       echo "ok 127.0.0.1:$p"
     else
@@ -118,12 +130,12 @@ fi
 cat <<'EOF'
 
 All stacks started:
-  Grafana       http://localhost:3000
+  Grafana       https://grafana.localhost (Traefik's local certificate may require browser approval)
   Banking API   http://localhost:8080
   Fraud svc     http://localhost:8081
   Insurance API http://localhost:8083  (container :8080)
   Risk svc      http://localhost:8082
-  OTLP banking   4317/gRPC 4318/HTTP | insurance 4320/gRPC 4321/HTTP
+  OTLP edge     https://banking-otlp.localhost and https://insurance-otlp.localhost
 
 Useful:
   ./scripts/down.sh                 # stop everything

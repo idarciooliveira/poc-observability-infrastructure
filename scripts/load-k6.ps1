@@ -15,6 +15,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
+$ObsCompose = Join-Path $Root "docker-compose.yml"
 $BankCompose = Join-Path $Root "custumers\digital-banking-services\docker-compose.yml"
 $InsCompose = Join-Path $Root "custumers\insurance-services\docker-compose.yml"
 $LoadDir = Join-Path $Root "load"
@@ -115,11 +116,10 @@ else { Write-Warning "127.0.0.1:8080 not reachable - start the stack first: .\sc
 Write-Host "== insurance =="
 if (Wait-Tcp 8083 5) { Write-Host "ok 127.0.0.1:8083 (insurance-api)" }
 else { Write-Warning "127.0.0.1:8083 not reachable - start the stack first: .\scripts\up.ps1" }
-Write-Host "== pipeline (gateway must accept OTLP or load runs blind) =="
-foreach ($p in 4317, 4318, 4320, 4321) {
-  if (Wait-Tcp $p 5) { Write-Host "ok 127.0.0.1:$p" }
-  else { Write-Warning "127.0.0.1:$p not reachable - telemetry will be dropped (see docker compose ps/logs)" }
-}
+Write-Host "== pipeline =="
+$platform = & docker compose -f $ObsCompose ps --status running otel-gateway otel-collector traefik 2>$null
+if ($LASTEXITCODE -eq 0) { Write-Host "ok platform services are running; OTLP is private behind Traefik :443" }
+else { Write-Warning "platform services are not all running (see docker compose logs)" }
 
 # Chaos set-up (no rebuild needed: services read CHAOS_* envs on restart).
 if ($Chaos -eq "latency") { Set-Chaos "2500" "0" }
@@ -153,5 +153,5 @@ try {
 
 Write-Host ""
 Write-Host "Endpoints: Banking API http://localhost:8080, Insurance API http://localhost:8083,"
-Write-Host "  Grafana http://localhost:3000, OTLP banking 4317/4318 | insurance 4320/4321."
+Write-Host "  Grafana https://grafana.localhost, OTLP is private behind Traefik :443."
 exit $K6Exit

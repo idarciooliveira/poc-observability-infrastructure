@@ -63,11 +63,26 @@ if ([string]::IsNullOrWhiteSpace($env:BANKING_TOKEN) -or [string]::IsNullOrWhite
 # Prod hardening #4: Grafana admin comes from the same root .env.
 $env:GF_ADMIN_USER = Get-EnvValue $RootEnv "GF_ADMIN_USER"
 $env:GF_ADMIN_PASSWORD = Get-EnvValue $RootEnv "GF_ADMIN_PASSWORD"
-if ([string]::IsNullOrWhiteSpace($env:GF_ADMIN_USER)) { $env:GF_ADMIN_USER = "admin" }
-if ([string]::IsNullOrWhiteSpace($env:GF_ADMIN_PASSWORD)) { $env:GF_ADMIN_PASSWORD = "admin" }
+if ([string]::IsNullOrWhiteSpace($env:GF_ADMIN_USER) -or [string]::IsNullOrWhiteSpace($env:GF_ADMIN_PASSWORD)) {
+  throw "GF_ADMIN_USER / GF_ADMIN_PASSWORD missing in $RootEnv. Set both values before starting."
+}
 
 Write-Host "NOTE: storage isolation is now enforced (Loki/Mimir/Tempo multitenancy)."
 Write-Host "If upgrading from a pre-multitenancy stack, run .\scripts\down.ps1 -Volumes once - old data under tenant fake/anonymous is invisible."
+
+# 2b. Local simulation TLS cert (self-signed *.localhost). Regenerate if missing.
+$CertDir = Join-Path $Root "observability\traefik\certs"
+if (-not (Test-Path (Join-Path $CertDir "edge.crt")) -or -not (Test-Path (Join-Path $CertDir "edge.key"))) {
+  Write-Host "== generating local edge TLS cert (*.localhost, simulation only) =="
+  New-Item -ItemType Directory -Force -Path $CertDir | Out-Null
+  & openssl req -x509 -newkey rsa:2048 -keyout (Join-Path $CertDir "edge.key") -out (Join-Path $CertDir "edge.crt") -days 365 -nodes -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,DNS:*.localhost,DNS:banking-otlp.localhost,DNS:banking-http-otlp.localhost,DNS:insurance-otlp.localhost,DNS:insurance-http-otlp.localhost,DNS:grafana.localhost,DNS:traefik"
+  Copy-Item (Join-Path $CertDir "edge.crt") (Join-Path $CertDir "ca.crt") -Force
+}
+
+# 2c. Host DNS check for browser/k6.
+foreach ($h in @("grafana.localhost", "banking-otlp.localhost", "insurance-otlp.localhost")) {
+  try { [void][Net.Dns]::GetHostEntry($h) } catch { Write-Warning "$h does not resolve — add '127.0.0.1 $h' to C:\Windows\System32\drivers\etc\hosts" }
+}
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { throw "docker not found in PATH." }
 
@@ -87,8 +102,8 @@ Invoke-ComposeUp (Join-Path $BankDir "docker-compose.yml")
 Write-Host "== insurance =="
 Invoke-ComposeUp (Join-Path $InsDir "docker-compose.yml")
 
-# 4. Gateway is distroless (healthcheck NONE): poll TCP from the host instead.
-foreach ($p in 4317, 4318, 4320, 4321, 3000) {
+# 4. Traefik is the public platform surface: poll TCP from the host instead.
+foreach ($p in 443, 8080, 8083) {
   if (Wait-Tcp $p) { Write-Host "ok 127.0.0.1:$p" }
   else { Write-Warning "127.0.0.1:$p not reachable yet (see docker compose ps/logs)" }
 }
@@ -96,12 +111,12 @@ foreach ($p in 4317, 4318, 4320, 4321, 3000) {
 @'
 
 All stacks started:
-  Grafana       http://localhost:3000
+  Grafana       https://grafana.localhost (Traefik local certificate may require browser approval)
   Banking API   http://localhost:8080
   Fraud svc     http://localhost:8081
   Insurance API http://localhost:8083  (container :8080)
   Risk svc      http://localhost:8082
-  OTLP banking   4317/gRPC 4318/HTTP | insurance 4320/gRPC 4321/HTTP
+  OTLP edge      https://banking-otlp.localhost and https://insurance-otlp.localhost
 
 Useful:
   .\scripts\down.ps1                # stop everything

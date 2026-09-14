@@ -6,8 +6,11 @@ services:
     container_name: insurance-risk-service
     ports:
       - "8082:8082"
+    volumes:
+      - ../../observability/traefik/certs/ca.crt:/certs/ca.crt:ro
     networks:
       - client-insurance
+      - otel-ingress
     environment:
       OTEL_SERVICE_NAME: risk-service
       OTEL_RESOURCE_ATTRIBUTES: service.namespace=insurance,tenant.id=insurance-client,deployment.environment=dev
@@ -15,11 +18,13 @@ services:
       OTEL_METRICS_EXPORTER: otlp
       OTEL_LOGS_EXPORTER: otlp
       OTEL_METRIC_EXPORT_INTERVAL: 15000
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4320}
+      # Production-like edge: OTLP/gRPC via Traefik 443 (SNI Host insurance-otlp.localhost).
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-https://insurance-otlp.localhost}
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_EXPORTER_OTLP_CERTIFICATE: /certs/ca.crt
       # Phase 6 (FR-06): gateway authenticates this tenant via bearer token.
       # Must match INSURANCE_TOKEN in the root observability .env.
-      OTEL_EXPORTER_OTLP_HEADERS: Authorization=Bearer ${INSURANCE_TOKEN:-dev-insurance-token-local-only}
+      OTEL_EXPORTER_OTLP_HEADERS: Authorization=Bearer ${INSURANCE_TOKEN:?INSURANCE_TOKEN must be set}
       OTEL_INSTRUMENTATION_MICROMETER_ENABLED: "true"
       # Phase 8 fault injection (risk-service only). 0/0 = off. LATENCY_MS >
       # 2000 also trips insurance-api's 2s risk-evaluation timeout (timeout demo).
@@ -35,6 +40,8 @@ services:
     # Container still serves 8080; test via http://localhost:8083.
     ports:
       - "8083:8080"
+    volumes:
+      - ../../observability/traefik/certs/ca.crt:/certs/ca.crt:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -42,6 +49,7 @@ services:
         condition: service_started
     networks:
       - client-insurance
+      - otel-ingress
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/insurance_db
       SPRING_DATASOURCE_USERNAME: insurance_user
@@ -53,11 +61,13 @@ services:
       OTEL_METRICS_EXPORTER: otlp
       OTEL_LOGS_EXPORTER: otlp
       OTEL_METRIC_EXPORT_INTERVAL: 15000
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4320}
+      # OTLP/gRPC via Traefik edge (see risk-service above).
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-https://insurance-otlp.localhost}
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_EXPORTER_OTLP_CERTIFICATE: /certs/ca.crt
       # Phase 6 (FR-06): gateway authenticates this tenant via bearer token.
       # Must match INSURANCE_TOKEN in the root observability .env.
-      OTEL_EXPORTER_OTLP_HEADERS: Authorization=Bearer ${INSURANCE_TOKEN:-dev-insurance-token-local-only}
+      OTEL_EXPORTER_OTLP_HEADERS: Authorization=Bearer ${INSURANCE_TOKEN:?INSURANCE_TOKEN must be set}
       OTEL_INSTRUMENTATION_MICROMETER_ENABLED: "true"
 
   postgres:
@@ -85,3 +95,6 @@ volumes:
 networks:
   client-insurance:
     name: client-insurance
+  otel-ingress:
+    external: true
+    name: otel-ingress

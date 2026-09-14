@@ -4,6 +4,7 @@
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+OBS_COMPOSE="$ROOT/docker-compose.yml"
 BANK_COMPOSE="$ROOT/custumers/digital-banking-services/docker-compose.yml"
 INS_COMPOSE="$ROOT/custumers/insurance-services/docker-compose.yml"
 LOAD_DIR="$ROOT/load"
@@ -124,14 +125,12 @@ if wait_tcp 127.0.0.1 8083 5; then
 else
   echo "WARNING: 127.0.0.1:8083 not reachable — start the stack first: ./scripts/up.sh" >&2
 fi
-echo "== pipeline (gateway must accept OTLP or load runs blind) =="
-for p in 4317 4318 4320 4321; do
-  if wait_tcp 127.0.0.1 "$p" 5; then
-    echo "ok 127.0.0.1:$p"
-  else
-    echo "WARNING: 127.0.0.1:$p not reachable — telemetry will be dropped (see docker compose ps/logs)" >&2
-  fi
-done
+echo "== pipeline =="
+if docker compose -f "$OBS_COMPOSE" ps --status running otel-gateway otel-collector traefik >/dev/null 2>&1; then
+  echo "ok platform services are running; OTLP is private behind Traefik :443"
+else
+  echo "WARNING: platform services are not all running (see docker compose logs)" >&2
+fi
 
 # Chaos set-up (restored to 0/0 below, even when k6 fails).
 if [ "$CHAOS" = "latency" ]; then set_chaos "2500" "0"; fi
@@ -160,5 +159,5 @@ fi
 
 echo ""
 echo "Endpoints: Banking API http://localhost:8080, Insurance API http://localhost:8083,"
-echo "  Grafana http://localhost:3000, OTLP banking 4317/4318 | insurance 4320/4321."
+echo "  Grafana https://grafana.localhost, OTLP is private behind Traefik :443."
 exit "$K6_EXIT"

@@ -1,0 +1,61 @@
+http:
+  middlewares:
+    platform-rate-limit:
+      rateLimit:
+        average: 1000
+        burst: 2000
+
+  routers:
+    otlp-banking-grpc:
+      rule: Host(`banking-otlp.localhost`)
+      entryPoints: [websecure]
+      tls: {}
+      middlewares: [platform-rate-limit]
+      service: otlp-banking-grpc
+    otlp-banking-http:
+      rule: Host(`banking-http-otlp.localhost`)
+      entryPoints: [websecure]
+      tls: {}
+      middlewares: [platform-rate-limit]
+      service: otlp-banking-http
+    otlp-insurance-grpc:
+      rule: Host(`insurance-otlp.localhost`)
+      entryPoints: [websecure]
+      tls: {}
+      middlewares: [platform-rate-limit]
+      service: otlp-insurance-grpc
+    otlp-insurance-http:
+      rule: Host(`insurance-http-otlp.localhost`)
+      entryPoints: [websecure]
+      tls: {}
+      middlewares: [platform-rate-limit]
+      service: otlp-insurance-http
+    grafana:
+      rule: Host(`grafana.localhost`)
+      entryPoints: [websecure]
+      tls: {}
+      service: grafana
+
+  services:
+    # gRPC backends use h2c (cleartext HTTP/2) — TLS terminates at Traefik,
+    # gateway stays plaintext on the private observability-internal network.
+    otlp-banking-grpc:
+      loadBalancer:
+        servers:
+          - url: h2c://otel-gateway:4317
+    otlp-banking-http:
+      loadBalancer:
+        servers:
+          - url: http://otel-gateway:4318
+    otlp-insurance-grpc:
+      loadBalancer:
+        servers:
+          - url: h2c://otel-gateway:4320
+    otlp-insurance-http:
+      loadBalancer:
+        servers:
+          - url: http://otel-gateway:4321
+    grafana:
+      loadBalancer:
+        servers:
+          - url: http://grafana:3000

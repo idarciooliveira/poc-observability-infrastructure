@@ -1,5 +1,275 @@
 # PRD: Centralized Multi-Tenant Observability POC
 
+## Development chapters
+
+This PRD is organized in two chapters. Chapter 1 documents the original POC and the architecture it validates. Chapter 2 defines the continuation of that POC, which adds a production-like Docker environment and compares direct telemetry export with customer-side collection.
+
+## Chapter 1: original centralized observability POC
+
+### Starting point
+
+The original POC models a centralized Observability-as-a-Service platform for two independent financial-services customers:
+
+- Banking
+- Insurance
+
+Each customer runs Spring Boot services and PostgreSQL in its own Docker network. Applications use the OpenTelemetry Java Agent and send metrics, logs, and traces to a shared OTLP ingestion endpoint owned by the observability platform.
+
+The platform receives telemetry through an OpenTelemetry gateway, identifies the tenant, routes data through an internal collector, and stores it in the LGTM stack:
+
+```text
+Customer applications
+    -> OTLP gateway
+    -> Internal OTel Collector
+    -> Mimir, Loki, Tempo
+    -> Grafana
+```
+
+### Why this chapter exists
+
+The first chapter answers the basic architecture question:
+
+> Can one company operate a shared observability platform for multiple customers while keeping customer networks and telemetry separated?
+
+The POC validates:
+
+- Separate customer Docker networks
+- Centralized OTLP ingestion
+- Tenant authentication
+- Server-side tenant assignment
+- Metrics, logs, and distributed traces
+- Business-level instrumentation
+- Tenant-aware storage routing
+- Grafana dashboards
+- Failure and latency investigation
+
+The gateway assigns tenant identity from the customer credential and overwrites any tenant value supplied by the application. The internal collector routes each tenant to its own Loki, Tempo, and Mimir tenant context.
+
+The original POC is intentionally not production-ready. It uses Docker Compose, local storage volumes, development credentials, limited edge security, and an operator-focused Grafana deployment. Its purpose is to prove the central collection and multi-tenancy model before adding operational complexity.
+
+### End state of chapter 1
+
+At the end of the original POC, the repository contains two working customer simulations and one central observability stack:
+
+```text
+Banking application  -> Central OTLP gateway
+Insurance application -> Central OTLP gateway
+```
+
+This is the baseline for the continuation. Existing functional requirements remain valid unless Chapter 2 explicitly extends them.
+
+## Chapter 2: production-like Docker continuation
+
+### Objective
+
+The continuation evolves the original POC into a production-like Docker environment and compares two telemetry collection approaches:
+
+1. Direct application export to the central OTLP gateway.
+2. Application export to a customer-side collector, which forwards telemetry to the central platform.
+
+The goal is not to claim that Docker Compose is a production platform. The goal is to reproduce the important production boundaries, security controls, failure modes, and onboarding workflow before moving to a larger runtime such as Kubernetes.
+
+### Architecture comparison
+
+The existing customers remain the direct-export baseline:
+
+```text
+Banking application
+    -> Central OTLP gateway
+    -> Internal OTel Collector
+    -> LGTM
+
+Insurance application
+    -> Central OTLP gateway
+    -> Internal OTel Collector
+    -> LGTM
+```
+
+A third customer is added to validate the customer-side collector model:
+
+```text
+Retail orders application
+    -> client-collector-retail-orders
+    -> Traefik
+    -> Central OTLP gateway
+    -> Internal OTel Collector
+    -> LGTM
+```
+
+The central gateway remains authoritative. It must authenticate the customer, assign the tenant, and overwrite tenant attributes received from either the application or the customer-side collector.
+
+### Third customer application
+
+The third customer represents a retail order-processing business. It should remain small, but it must generate realistic business telemetry.
+
+The minimum application scope is:
+
+- `POST /orders`
+- `GET /orders/{id}`
+- `POST /orders/{id}/cancel`
+- Product and quantity validation
+- Order total calculation
+- Order status changes
+- Controlled errors
+- Artificial latency for investigation scenarios
+
+The application should produce business telemetry such as:
+
+```text
+retail.orders.created
+retail.orders.cancelled
+retail.orders.failed
+retail.order.value
+retail.order.processing.duration
+```
+
+The customer-side collector must live inside the customer deployment bundle and use the name:
+
+```text
+client-collector-retail-orders
+```
+
+The application must send telemetry only to this local collector. It must not connect directly to the central gateway.
+
+### Repository organization
+
+The repository should be reorganized so that customer workloads and platform infrastructure are clearly separated. The existing `custumers` directory should be renamed to `customers` as part of the cleanup, with references in scripts and Compose files updated together.
+
+The target structure is:
+
+```text
+apps/
+  banking/
+  insurance/
+  retail-orders/
+
+platform/
+  otel/
+  loki/
+  tempo/
+  mimir/
+  grafana/
+  traefik/
+
+customers/
+  banking/
+  insurance/
+  retail-orders/
+    retail-api/
+    client-collector-retail-orders/
+      collector-config.yaml
+
+deploy/compose/
+  platform.yml
+  banking.yml
+  insurance.yml
+  retail-orders.yml
+  production-like.yml
+
+tests/
+  tenant-isolation/
+  telemetry-routing/
+  collector-failure/
+  security/
+
+docs/
+  architecture-direct.md
+  architecture-client-collector.md
+  onboarding-customer.md
+  production-readiness.md
+```
+
+The existing POC may be moved incrementally. The cleanup must not change tenant behavior or discard existing customer functionality.
+
+### Edge proxy decision
+
+Traefik is the selected edge proxy for the production-like Docker environment.
+
+Traefik is chosen because it provides Docker service discovery, dynamic routing, OTLP/gRPC support, TLS, mTLS, rate-limit middleware, and metrics with less manual configuration than NGINX. Caddy remains a possible option for a simpler HTTPS-only deployment. NGINX remains a possible later choice if the platform needs more manually controlled edge behavior.
+
+Traefik must expose only the public secure endpoint:
+
+```text
+443/tcp
+```
+
+The OTLP gateway ports must remain private. Traefik handles the edge connection, while the OTLP gateway handles customer authentication and tenant assignment.
+
+### Docker network boundaries
+
+The production-like environment must use explicit network boundaries:
+
+```text
+client-banking
+client-insurance
+client-retail-orders
+otel-ingress
+observability-internal
+```
+
+Applications join only their own customer network. The retail customer-side collector joins its customer network and `otel-ingress`. Traefik and the central gateway join `otel-ingress`. The internal collector and storage services join only `observability-internal`.
+
+Customer applications must not access Loki, Tempo, Mimir, Grafana, or the internal collector directly.
+
+### Production-like controls
+
+The continuation must add the following controls within Docker:
+
+- TLS or mTLS between customer collectors and the platform
+- Secret files or Docker secrets instead of committed credentials
+- No development fallback tokens in production-like Compose files
+- No unnecessary database host port mappings
+- Resource limits on all services
+- Health and readiness checks
+- Collector batching, retry, queue, and backpressure policies
+- Per-tenant ingestion limits
+- Tenant-specific retention policies
+- Persistent storage volumes
+- Grafana tenant and folder isolation
+- Restricted actuator and diagnostic endpoints
+- Gateway and collector self-monitoring
+
+The central collector remains responsible for final PII filtering and tenant routing. The customer-side collector should perform early filtering and buffering, but it must not be trusted as a security boundary.
+
+### Validation plan
+
+The same load and failure scenarios must be executed against the direct-export customers and the retail customer using the local collector.
+
+The POC must compare:
+
+- Telemetry delivery during gateway outage
+- Application behavior during WAN or ingress failure
+- Collector restart recovery
+- CPU and memory usage
+- Telemetry loss under overload
+- PII filtering before telemetry leaves the customer network
+- Customer onboarding effort
+- Configuration and operational complexity
+- Tenant isolation and spoofing resistance
+
+Required security tests include:
+
+1. Send a banking credential with `tenant.id=insurance-client`.
+2. Send a retail credential with `tenant.id=banking-client`.
+3. Confirm that the gateway overwrites both values correctly.
+4. Attempt to access another customer's Grafana data.
+5. Revoke or rotate a customer credential.
+6. Confirm that expired credentials cannot ingest telemetry.
+
+Required resilience tests include:
+
+1. Stop the central gateway while generating application traffic.
+2. Stop the retail customer-side collector while generating application traffic.
+3. Restart the collector and measure recovered telemetry.
+4. Restart Loki, Tempo, and Mimir independently.
+5. Generate traffic above the configured tenant quota.
+
+### Decision criteria
+
+The client-side collector becomes the default customer deployment model if it provides better results for network outage tolerance, early data protection, buffering, and operational control without creating an unacceptable onboarding burden.
+
+Direct application export may remain available for small customers, development environments, and low-complexity integrations. The central gateway, tenant enforcement, storage isolation, and Grafana authorization are required in both models.
+
 ## 1. Product Definition
 
 ### 1.1 Problem

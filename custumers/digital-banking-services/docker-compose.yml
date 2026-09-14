@@ -6,8 +6,11 @@ services:
     container_name: digital-fraud-service
     ports:
       - "${FRAUD_SERVICE_PORT:-8081}:8081"
+    volumes:
+      - ../../observability/traefik/certs/ca.crt:/certs/ca.crt:ro
     networks:
       - client-banking
+      - otel-ingress
     environment:
       OTEL_SERVICE_NAME: fraud-service
       OTEL_RESOURCE_ATTRIBUTES: service.namespace=banking,tenant.id=banking-client,deployment.environment=${ENV:-dev}
@@ -15,11 +18,15 @@ services:
       OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-otlp}
       OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-otlp}
       OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-15000}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4317}
+      # Production-like edge: OTLP/gRPC via Traefik 443 (SNI Host banking-otlp.localhost).
+      # Traefik terminates TLS and forwards h2c to the gateway; gateway still
+      # enforces BANKING_TOKEN -> tenant.id. CA is the local simulation cert.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-https://banking-otlp.localhost}
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_EXPORTER_OTLP_CERTIFICATE: /certs/ca.crt
       # Phase 6 (FR-06): gateway authenticates this tenant via bearer token.
       # Must match BANKING_TOKEN in the root observability .env.
-      OTEL_EXPORTER_OTLP_HEADERS: Authorization=Bearer ${BANKING_TOKEN:-dev-banking-token-local-only}
+      OTEL_EXPORTER_OTLP_HEADERS: Authorization=Bearer ${BANKING_TOKEN:?BANKING_TOKEN must be set}
       OTEL_INSTRUMENTATION_MICROMETER_ENABLED: "true"
       # Phase 8 fault injection (fraud-service only). 0/0 = off. LATENCY_MS >
       # 2000 also trips banking-api's 2s fraud-check timeout (timeout demo).
@@ -33,6 +40,8 @@ services:
     container_name: digital-banking-api
     ports:
       - "${BANKING_API_PORT:-8080}:8080"
+    volumes:
+      - ../../observability/traefik/certs/ca.crt:/certs/ca.crt:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -45,26 +54,26 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-digital_banking}
       # Fraud Service (Phase 4: distributed tracing)
       FRAUD_SERVICE_URL: http://fraud-service:8081
-      # OpenTelemetry (Phase 6: OTLP/gRPC to the gateway's banking listener.
-      # host.docker.internal resolves out of the box under Docker Desktop; if
-      # you move to native Docker Engine/WSL2 without Docker Desktop, add
-      # `extra_hosts: ["host.docker.internal:host-gateway"]` here.)
+      # OpenTelemetry: OTLP/gRPC via Traefik edge (see fraud-service above).
+      # banking-otlp.localhost resolves to Traefik on otel-ingress via alias.
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-banking-api}
       OTEL_RESOURCE_ATTRIBUTES: service.namespace=banking,tenant.id=banking-client,deployment.environment=${ENV:-dev}
       OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-otlp}
       OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-otlp}
       OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-otlp}
       OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-15000}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4317}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-https://banking-otlp.localhost}
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_EXPORTER_OTLP_CERTIFICATE: /certs/ca.crt
       # Phase 6 (FR-06): gateway authenticates this tenant via bearer token.
       # Must match BANKING_TOKEN in the root observability .env.
-      OTEL_EXPORTER_OTLP_HEADERS: Authorization=Bearer ${BANKING_TOKEN:-dev-banking-token-local-only}
+      OTEL_EXPORTER_OTLP_HEADERS: Authorization=Bearer ${BANKING_TOKEN:?BANKING_TOKEN must be set}
       # Micrometer meters (TransferMetrics: bank.transfers.total, bank.fraud.*)
       # are NOT bridged into OTLP by default — this opts the agent in.
       OTEL_INSTRUMENTATION_MICROMETER_ENABLED: "true"
     networks:
       - client-banking
+      - otel-ingress
 
   postgres:
     image: postgres:16-alpine
@@ -91,3 +100,6 @@ volumes:
 networks:
   client-banking:
     name: client-banking
+  otel-ingress:
+    external: true
+    name: otel-ingress
