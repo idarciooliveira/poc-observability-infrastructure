@@ -1,7 +1,7 @@
 ﻿# Generate sustained realistic traffic with k6 (grafana/k6 in Docker, no local install).
 # Usage: .\scripts\load-k6.ps1 [-DurationMin 5] [-Vus 10] [-Chaos off|latency|rejects]
 #   -DurationMin  steady-load minutes (ramp is +2m, or +1m when <= 2)
-#   -Vus          virtual users PER scenario (banking + insurance run together)
+#   -Vus          virtual users PER scenario (banking + insurance + retail run together)
 #   -Chaos        off (default) | latency (2.5s downstream delay, trips the 2s
 #                 timeout) | rejects (30% chaos_forced rejections)
 param(
@@ -18,6 +18,7 @@ $Root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $ObsCompose = Join-Path $Root "docker-compose.yml"
 $BankCompose = Join-Path $Root "custumers\digital-banking-services\docker-compose.yml"
 $InsCompose = Join-Path $Root "custumers\insurance-services\docker-compose.yml"
+$RetailCompose = Join-Path $Root "custumers\retail-orders-services\docker-compose.yml"
 $LoadDir = Join-Path $Root "load"
 
 if ($h -or $Help) {
@@ -25,10 +26,12 @@ if ($h -or $Help) {
 Usage: .\scripts\load-k6.ps1 [-DurationMin 5] [-Vus 10] [-Chaos off|latency|rejects]
 
   -DurationMin  steady-load minutes (default 5; ramp adds +2m, or +1m when <= 2)
-  -Vus          virtual users per scenario (default 10; banking + insurance run together)
+  -Vus          virtual users per scenario (default 10; banking + insurance + retail run together)
   -Chaos        off | latency | rejects (default off)
                 latency: CHAOS_LATENCY_MS=2500 on fraud/risk-service (trips 2s timeout)
+                         + CHAOS_LATENCY_MS=2500 on retail-api (processing delay)
                 rejects: CHAOS_REJECT_RATE=0.3 on fraud/risk-service (reject storm)
+                         + CHAOS_FAIL_RATE=0.3 on retail-api (500 storm)
 
 Examples:
   .\scripts\load-k6.ps1 -DurationMin 1 -Vus 2
@@ -36,12 +39,12 @@ Examples:
 
 Notes:
   k6 runs in Docker (grafana/k6) on the default bridge network via
-  http://host.docker.internal:8080|:8083 (Docker Desktop resolves it;
+  http://host.docker.internal:8080|:8083|:8084 (Docker Desktop resolves it;
   native-Linux Engine may need extra_hosts, see compose comments).
   Backends enforce X-Scope-OrgID (multitenancy): if dashboards stay empty
   after enabling it, reset volumes once (.\scripts\down.ps1 -Volumes) and
-  re-run load to repopulate both tenants. Operator DS are federated
-  (banking-client|insurance-client); Loki-banking/-insurance etc. prove
+  re-run load to repopulate all tenants. Operator DS are federated
+  (banking-client|insurance-client|retail-client); per-tenant DS prove
   isolation in Explore. Services have mem limits - watch `docker stats`
   on high -Vus runs.
 '@
@@ -97,16 +100,20 @@ function Wait-Tcp($Port, $Tries = 30) {
 function Set-Chaos($Latency, $Rate) {
   # NOTE: pass ALL args as one array. Splatting a single string makes
   # PS 5.1 enumerate its characters to a native command (see up.ps1).
-  # No rebuild needed: fraud/risk-service read CHAOS_* envs on restart.
-  Write-Host "== chaos CHAOS_LATENCY_MS=$Latency CHAOS_REJECT_RATE=$Rate =="
+  # No rebuild needed: fraud/risk-service read CHAOS_* envs on restart;
+  # retail-api reads CHAOS_LATENCY_MS / CHAOS_FAIL_RATE (mapped here).
+  Write-Host "== chaos CHAOS_LATENCY_MS=$Latency CHAOS_REJECT_RATE/CHAOS_FAIL_RATE=$Rate =="
   $env:CHAOS_LATENCY_MS = $Latency
   $env:CHAOS_REJECT_RATE = $Rate
   try {
     $a = @("compose", "-f", $BankCompose, "up", "-d", "fraud-service"); & docker @a
     $b = @("compose", "-f", $InsCompose, "up", "-d", "risk-service"); & docker @b
+    $env:CHAOS_FAIL_RATE = $Rate
+    $c = @("compose", "-f", $RetailCompose, "up", "-d", "retail-api"); & docker @c
   } finally {
     Remove-Item Env:\CHAOS_LATENCY_MS -ErrorAction SilentlyContinue
     Remove-Item Env:\CHAOS_REJECT_RATE -ErrorAction SilentlyContinue
+    Remove-Item Env:\CHAOS_FAIL_RATE -ErrorAction SilentlyContinue
   }
 }
 
@@ -116,6 +123,9 @@ else { Write-Warning "127.0.0.1:8080 not reachable - start the stack first: .\sc
 Write-Host "== insurance =="
 if (Wait-Tcp 8083 5) { Write-Host "ok 127.0.0.1:8083 (insurance-api)" }
 else { Write-Warning "127.0.0.1:8083 not reachable - start the stack first: .\scripts\up.ps1" }
+Write-Host "== retail =="
+if (Wait-Tcp 8084 5) { Write-Host "ok 127.0.0.1:8084 (retail-api)" }
+else { Write-Warning "127.0.0.1:8084 not reachable - start the stack first: .\scripts\up.ps1" }
 Write-Host "== pipeline =="
 $platform = & docker compose -f $ObsCompose ps --status running otel-gateway otel-collector traefik 2>$null
 if ($LASTEXITCODE -eq 0) { Write-Host "ok platform services are running; OTLP is private behind Traefik :443" }
@@ -127,13 +137,14 @@ elseif ($Chaos -eq "rejects") { Set-Chaos "0" "0.3" }
 
 $K6Exit = 0
 try {
-  Write-Host "== k6 (banking + insurance, Vus=$Vus steady=${DurationMin}m ramp=${RampMin}m chaos=$Chaos) =="
+  Write-Host "== k6 (banking + insurance + retail, Vus=$Vus steady=${DurationMin}m ramp=${RampMin}m chaos=$Chaos) =="
   # NOTE: full arg array again - never splat a single string (see up.ps1).
   $k6Args = @(
     "run", "--rm", "-i",
     "--network", "bridge",
     "-e", "BANKING_URL=http://host.docker.internal:8080",
     "-e", "INSURANCE_URL=http://host.docker.internal:8083",
+    "-e", "RETAIL_URL=http://host.docker.internal:8084",
     "-e", "VUS=$Vus",
     "-e", "RAMP_MIN=$RampMin",
     "-e", "STEADY_MIN=$DurationMin",
@@ -153,5 +164,6 @@ try {
 
 Write-Host ""
 Write-Host "Endpoints: Banking API http://localhost:8080, Insurance API http://localhost:8083,"
+Write-Host "  Retail API http://localhost:8084,"
 Write-Host "  Grafana https://grafana.localhost, OTLP is private behind Traefik :443."
 exit $K6Exit

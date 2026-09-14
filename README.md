@@ -45,6 +45,27 @@ http://localhost:8080, Insurance API http://localhost:8083.
 .\scripts\down.ps1          # stop everything (add -Volumes to drop data)
 ```
 
+### Ops runbook (local simulation)
+
+- **Config edits need restarts.** `up -d` does not reload mounted files for
+  the OTel gateway / internal collector / Loki / Tempo / Mimir — restart the
+  container after editing (`docker compose restart otel-gateway`). Traefik's
+  file-provider watches and reloads on its own.
+- **Fresh `.env` + stale volumes = auth failures.** `.env` files are
+  gitignored; a fresh copy from `.env.example` carries placeholder secrets
+  that won't match an existing Postgres/Grafana volume (symptom: banking-api
+  `password authentication failed`, Grafana 401). Either reuse the previous
+  `.env` or reset volumes once (`down -Volumes`, or drop just the banking PG
+  volume) and re-run load. Grafana admin can also be reset without wiping
+  data: `docker exec -u 0 poc-grafana grafana-cli admin reset-admin-password <pass>`.
+- **Prod-like hardening (Ch.2, Gap 5).** Retail services carry `mem_limit` /
+  log caps; retention is 7d everywhere (Loki `retention_period`, Tempo
+  `block_retention`, Mimir `compactor_blocks_retention_period`); per-tenant
+  ingestion limits are explicit (Mimir `ingestion_rate`/`ingestion_burst_size`/
+  `max_global_series_per_user`, Loki `ingestion_rate_mb`/`burst`, Traefik
+  rate-limit). Re-run `tests/tenant-isolation/spoof-proof.sh` after backend
+  changes.
+
 ### Generate load
 
 ```powershell

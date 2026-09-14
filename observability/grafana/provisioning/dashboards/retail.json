@@ -1,0 +1,106 @@
+{
+  "uid": "poc-retail",
+  "title": "POC — Retail",
+  "tags": ["poc", "ch2", "retail"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Order rate (created / cancelled / failed)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "mimir_ds" },
+      "targets": [
+        {
+          "expr": "sum(rate(retail_orders_created_total{tenant_id=\"retail-client\"}[$__rate_interval]))",
+          "legendFormat": "created",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(retail_orders_cancelled_total{tenant_id=\"retail-client\"}[$__rate_interval]))",
+          "legendFormat": "cancelled",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(rate(retail_orders_failed_total{tenant_id=\"retail-client\"}[$__rate_interval]))",
+          "legendFormat": "failed",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Orders created rate",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "mimir_ds" },
+      "targets": [
+        {
+          "expr": "sum(rate(retail_orders_created_total{tenant_id=\"retail-client\"}[$__rate_interval]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Cancel ratio",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "mimir_ds" },
+      "targets": [
+        {
+          "expr": "sum(rate(retail_orders_cancelled_total{tenant_id=\"retail-client\"}[$__rate_interval])) / sum(rate(retail_orders_created_total{tenant_id=\"retail-client\"}[$__rate_interval]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit" } }
+    },
+    {
+      "id": 4,
+      "title": "Max order processing latency",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "mimir_ds" },
+      "description": "Max (not p95): the OTel-translated business timers carry only a +Inf bucket, so histogram_quantile is NaN. Max still shows latency spikes (e.g. chaos injection).",
+      "targets": [
+        {
+          "expr": "max(retail_order_processing_duration_max_seconds{tenant_id=\"retail-client\"})",
+          "legendFormat": "max order.process",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 5,
+      "title": "Max order value",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "mimir_ds" },
+      "description": "Max order total per export interval (synthetic catalog prices, no PII).",
+      "targets": [
+        {
+          "expr": "max(retail_order_value_max_currency{tenant_id=\"retail-client\"})",
+          "legendFormat": "max total",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currency" } }
+    },
+    {
+      "id": 6,
+      "title": "Retail logs (trace_id links to Tempo)",
+      "type": "logs",
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "loki", "uid": "loki_ds" },
+      "targets": [
+        {
+          "expr": "{tenant_id=\"retail-client\"}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

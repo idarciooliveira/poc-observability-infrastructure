@@ -36,3 +36,10 @@ storage:
       path: /tmp/tempo/traces
     wal:
       path: /tmp/tempo/wal
+
+# Prod hardening #5 (Ch.2): 7d trace retention, aligned with Loki's 168h.
+# Applies to all tenants (incl. retail-client) — Tempo retention is not
+# per-tenant on the local backend.
+compactor:
+  compaction:
+    block_retention: 168h

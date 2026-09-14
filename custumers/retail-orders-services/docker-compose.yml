@@ -4,6 +4,14 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: retail-orders-api
+    restart: unless-stopped
+    mem_limit: 1g
+    mem_reservation: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "${RETAIL_API_PORT:-8084}:8080"
     depends_on:
@@ -40,6 +48,14 @@ services:
   client-collector-retail-orders:
     image: otel/opentelemetry-collector-contrib:0.135.0
     container_name: client-collector-retail-orders
+    restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     # File-backed queue volume arrives root-owned and the image runs non-root;
     # root here mirrors the tempo concession in the root compose (local-POC only).
     user: "0"
@@ -64,6 +80,14 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: retail-orders-postgres
+    restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-retail_orders}
       POSTGRES_USER: ${POSTGRES_USER:-retail_orders}

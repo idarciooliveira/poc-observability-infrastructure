@@ -7,6 +7,7 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 OBS_COMPOSE="$ROOT/docker-compose.yml"
 BANK_COMPOSE="$ROOT/custumers/digital-banking-services/docker-compose.yml"
 INS_COMPOSE="$ROOT/custumers/insurance-services/docker-compose.yml"
+RETAIL_COMPOSE="$ROOT/custumers/retail-orders-services/docker-compose.yml"
 LOAD_DIR="$ROOT/load"
 
 DURATION_MIN=5
@@ -20,10 +21,12 @@ for arg in "$@"; do
 Usage: ./scripts/load-k6.sh [--duration-min 5] [--vus 10] [--chaos off|latency|rejects]
 
   --duration-min  steady-load minutes (default 5; ramp adds +2m, or +1m when <= 2)
-  --vus           virtual users per scenario (default 10; banking + insurance run together)
+  --vus           virtual users per scenario (default 10; banking + insurance + retail run together)
   --chaos         off | latency | rejects (default off)
                   latency: CHAOS_LATENCY_MS=2500 on fraud/risk-service (trips 2s timeout)
+                           + CHAOS_LATENCY_MS=2500 on retail-api (processing delay)
                   rejects: CHAOS_REJECT_RATE=0.3 on fraud/risk-service (reject storm)
+                           + CHAOS_FAIL_RATE=0.3 on retail-api (500 storm)
 
 Examples:
   ./scripts/load-k6.sh --duration-min 1 --vus 2
@@ -31,12 +34,12 @@ Examples:
 
 Notes:
   k6 runs in Docker (grafana/k6) on the default bridge network via
-  http://host.docker.internal:8080|:8083 (Docker Desktop resolves it;
+  http://host.docker.internal:8080|:8083|:8084 (Docker Desktop resolves it;
   native-Linux Engine may need extra_hosts, see compose comments).
   Backends enforce X-Scope-OrgID (multitenancy): if dashboards stay empty
   after enabling it, reset volumes once (./scripts/down.sh --volumes) and
-  re-run load to repopulate both tenants. Operator DS are federated
-  (banking-client|insurance-client); Loki-banking/-insurance etc. prove
+  re-run load to repopulate all tenants. Operator DS are federated
+  (banking-client|insurance-client|retail-client); per-tenant DS prove
   isolation in Explore. Services have mem limits — watch 'docker stats'
   on high --vus runs.
 EOF
@@ -107,10 +110,12 @@ wait_tcp() {
 
 set_chaos() {
   # $1 = latency ms, $2 = reject rate. No rebuild needed: fraud/risk-service
-  # read CHAOS_* envs on restart.
-  echo "== chaos CHAOS_LATENCY_MS=$1 CHAOS_REJECT_RATE=$2 =="
+  # read CHAOS_* envs on restart; retail-api reads CHAOS_LATENCY_MS /
+  # CHAOS_FAIL_RATE (different reject var name — mapped here).
+  echo "== chaos CHAOS_LATENCY_MS=$1 CHAOS_REJECT_RATE/CHAOS_FAIL_RATE=$2 =="
   CHAOS_LATENCY_MS="$1" CHAOS_REJECT_RATE="$2" docker compose -f "$BANK_COMPOSE" up -d fraud-service
   CHAOS_LATENCY_MS="$1" CHAOS_REJECT_RATE="$2" docker compose -f "$INS_COMPOSE" up -d risk-service
+  CHAOS_LATENCY_MS="$1" CHAOS_FAIL_RATE="$2" docker compose -f "$RETAIL_COMPOSE" up -d retail-api
 }
 
 echo "== banking =="
@@ -125,6 +130,12 @@ if wait_tcp 127.0.0.1 8083 5; then
 else
   echo "WARNING: 127.0.0.1:8083 not reachable — start the stack first: ./scripts/up.sh" >&2
 fi
+echo "== retail =="
+if wait_tcp 127.0.0.1 8084 5; then
+  echo "ok 127.0.0.1:8084 (retail-api)"
+else
+  echo "WARNING: 127.0.0.1:8084 not reachable — start the stack first: ./scripts/up.sh" >&2
+fi
 echo "== pipeline =="
 if docker compose -f "$OBS_COMPOSE" ps --status running otel-gateway otel-collector traefik >/dev/null 2>&1; then
   echo "ok platform services are running; OTLP is private behind Traefik :443"
@@ -136,11 +147,12 @@ fi
 if [ "$CHAOS" = "latency" ]; then set_chaos "2500" "0"; fi
 if [ "$CHAOS" = "rejects" ]; then set_chaos "0" "0.3"; fi
 
-echo "== k6 (banking + insurance, vus=$VUS steady=${DURATION_MIN}m ramp=${RAMP_MIN}m chaos=$CHAOS) =="
+echo "== k6 (banking + insurance + retail, vus=$VUS steady=${DURATION_MIN}m ramp=${RAMP_MIN}m chaos=$CHAOS) =="
 if docker run --rm -i \
   --network bridge \
   -e "BANKING_URL=http://host.docker.internal:8080" \
   -e "INSURANCE_URL=http://host.docker.internal:8083" \
+  -e "RETAIL_URL=http://host.docker.internal:8084" \
   -e "VUS=$VUS" \
   -e "RAMP_MIN=$RAMP_MIN" \
   -e "STEADY_MIN=$DURATION_MIN" \
@@ -159,5 +171,6 @@ fi
 
 echo ""
 echo "Endpoints: Banking API http://localhost:8080, Insurance API http://localhost:8083,"
+echo "  Retail API http://localhost:8084,"
 echo "  Grafana https://grafana.localhost, OTLP is private behind Traefik :443."
 exit "$K6_EXIT"

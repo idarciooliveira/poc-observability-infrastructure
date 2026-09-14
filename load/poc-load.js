@@ -1,11 +1,11 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 
-// Sustained realistic traffic for the observability POC (banking + insurance).
+// Sustained realistic traffic for the observability POC (banking + insurance + retail).
 // Run via scripts/load-k6.ps1|.sh (grafana/k6 in Docker, no local install).
 //
 // Env (wrappers pass these; defaults = Docker Desktop host mapping):
-//   BANKING_URL, INSURANCE_URL, VUS, RAMP_MIN, STEADY_MIN, CHAOS_MODE
+//   BANKING_URL, INSURANCE_URL, RETAIL_URL, VUS, RAMP_MIN, STEADY_MIN, CHAOS_MODE
 //
 // Alignment with prod hardening 1-4: this script only drives app APIs —
 // tenant separation happens server-side (gateway overwrites tenant.id and the
@@ -13,11 +13,17 @@ import { check, sleep } from 'k6';
 // needed here. The k6 `tenant` tag below is load-side grouping only. None of
 // these routes are /health|/ready, so the pipeline `filter` keeps all of it.
 // After enabling multitenancy, reset volumes once then re-run load to
-// repopulate both tenants; operator dashboards query federated
-// banking-client|insurance-client, per-tenant DS prove isolation.
+// repopulate all tenants; operator dashboards query federated
+// banking-client|insurance-client|retail-client, per-tenant DS prove isolation.
+//
+// Retail (Ch.2) drives the client-collector lane: POST /orders,
+// GET /orders/{id}, POST /orders/{id}/cancel. Catalog: PROD-001/002/003
+// (see retail CreateOrderUseCase); qty 0 -> 400 (bean validation),
+// unknown product -> 422, double cancel -> 409, missing id -> 404.
 
 const BANKING_URL = __ENV.BANKING_URL || 'http://host.docker.internal:8080';
 const INSURANCE_URL = __ENV.INSURANCE_URL || 'http://host.docker.internal:8083';
+const RETAIL_URL = __ENV.RETAIL_URL || 'http://host.docker.internal:8084';
 const VUS = parseInt(__ENV.VUS || '10', 10);
 const RAMP_MIN = parseFloat(__ENV.RAMP_MIN || '2');
 const STEADY_MIN = parseFloat(__ENV.STEADY_MIN || '5');
@@ -32,6 +38,8 @@ const POLICY_ACTIVE_SMALL = 'b1c2e8d0-2222-4b3b-8d2b-000000000002'; // ACTIVE li
 const POLICY_INACTIVE = 'b1c2e8d0-2222-4b3b-8d2b-000000000003'; // INACTIVE limit 75000
 const POLICY_MISSING = 'b1c2e8d0-2222-4b3b-8d2b-000000009999'; // valid UUID, never seeded -> 404
 const TRANSFER_MISSING = '00000000-0000-0000-0000-000000000000'; // valid UUID, never a transfer -> 404
+const ORDER_MISSING = '00000000-0000-0000-0000-000000000000'; // valid UUID, never an order -> 404
+const RETAIL_PRODUCTS = ['PROD-001', 'PROD-002', 'PROD-003']; // synthetic catalog (CreateOrderUseCase)
 
 const DOWN_MIN = STEADY_MIN <= 2 ? 0.5 : 1;
 
@@ -51,6 +59,17 @@ export const options = {
     insurance: {
       executor: 'ramping-vus',
       exec: 'insurance',
+      startVUs: 0,
+      stages: [
+        { duration: `${RAMP_MIN}m`, target: VUS },
+        { duration: `${STEADY_MIN}m`, target: VUS },
+        { duration: `${DOWN_MIN}m`, target: 0 },
+      ],
+      gracefulRampDown: '30s',
+    },
+    retail: {
+      executor: 'ramping-vus',
+      exec: 'retail',
       startVUs: 0,
       stages: [
         { duration: `${RAMP_MIN}m`, target: VUS },
@@ -304,5 +323,135 @@ export function insurance(data) {
   }
 
   check(res, { [`insurance:${outcome} status ${expected}`]: (r) => r.status === expected });
+  sleep(0.3 + Math.random() * 0.5);
+}
+
+// Per-VU state for the retail order lifecycle: last created id (reads),
+// one cancellable id (cancel -> 200), one cancelled id (double-cancel -> 409).
+// (Top-level `let` is VU-scoped in k6: each VU gets its own copy.)
+let lastOrderId = null;
+let cancellableOrderId = null;
+let cancelledOrderId = null;
+
+function retailProduct() {
+  return RETAIL_PRODUCTS[Math.floor(Math.random() * RETAIL_PRODUCTS.length)];
+}
+
+function retailCreate(checkOutcome) {
+  const res = http.post(
+    `${RETAIL_URL}/orders`,
+    JSON.stringify({ productId: retailProduct(), quantity: 1 + Math.floor(Math.random() * 5) }),
+    tag('retail', checkOutcome),
+  );
+  if (res.status === 201) {
+    try {
+      const id = res.json('id');
+      lastOrderId = id;
+      cancellableOrderId = id;
+    } catch (e) {
+      // leave VU state untouched; the status check below still applies
+    }
+  }
+  return res;
+}
+
+export function retail() {
+  // Retail order lifecycle through the Ch.2 client-collector lane.
+  // Status map (see OrderController + GlobalExceptionHandler):
+  // created 201, cancel 200, double-cancel 409, qty 0 -> 400 (bean
+  // validation @Min), unknown product -> 422, missing id -> 404.
+  const kind = pick([
+    [40, 'created'],
+    [55, 'cancel'],
+    [60, 'conflict'],
+    [68, 'invalid'],
+    [76, 'unknown'],
+    [84, 'notfound'],
+    [100, 'read'],
+  ]);
+
+  let res;
+  let expected;
+  let outcome = kind;
+
+  if (kind === 'created') {
+    res = retailCreate('created');
+    expected = 201;
+  } else if (kind === 'cancel') {
+    if (cancellableOrderId) {
+      const id = cancellableOrderId;
+      cancellableOrderId = null;
+      res = http.post(`${RETAIL_URL}/orders/${id}/cancel`, null, tag('retail', 'cancel'));
+      expected = 200;
+      if (res.status === 200) cancelledOrderId = id;
+    } else {
+      // No cancellable order yet: create one and cancel it inline (200).
+      const created = retailCreate('cancel');
+      if (created.status === 201) {
+        try {
+          const id = created.json('id');
+          cancellableOrderId = null;
+          res = http.post(`${RETAIL_URL}/orders/${id}/cancel`, null, tag('retail', 'cancel'));
+          expected = 200;
+          if (res.status === 200) cancelledOrderId = id;
+        } catch (e) {
+          res = created;
+          expected = 201;
+          outcome = 'created';
+        }
+      } else {
+        res = created;
+        expected = 201;
+        outcome = 'created';
+      }
+    }
+  } else if (kind === 'conflict') {
+    if (cancelledOrderId) {
+      // Already cancelled -> 409 (OrderAlreadyCancelledException -> CONFLICT).
+      res = http.post(`${RETAIL_URL}/orders/${cancelledOrderId}/cancel`, null, tag('retail', 'conflict'));
+      expected = 409;
+    } else {
+      res = retailCreate('created');
+      expected = 201;
+      outcome = 'created';
+    }
+  } else if (kind === 'invalid') {
+    // Bean validation (@Min(1)) rejects before the use case -> 400.
+    res = http.post(
+      `${RETAIL_URL}/orders`,
+      JSON.stringify({ productId: retailProduct(), quantity: 0 }),
+      tag('retail', 'invalid'),
+    );
+    expected = 400;
+  } else if (kind === 'unknown') {
+    // Known-shape request, unknown catalog product -> 422.
+    res = http.post(
+      `${RETAIL_URL}/orders`,
+      JSON.stringify({ productId: 'NOPE-9999', quantity: 1 }),
+      tag('retail', 'unknown_product'),
+    );
+    expected = 422;
+    outcome = 'unknown_product';
+  } else if (kind === 'notfound') {
+    // Valid UUID, never an order -> 404 (cancel path also 404s; alternate).
+    if (Math.random() < 0.5) {
+      res = http.get(`${RETAIL_URL}/orders/${ORDER_MISSING}`, tag('retail', 'notfound'));
+    } else {
+      res = http.post(`${RETAIL_URL}/orders/${ORDER_MISSING}/cancel`, null, tag('retail', 'notfound'));
+    }
+    expected = 404;
+  } else {
+    // Reads: GET last created (200) or a missing id (404).
+    if (lastOrderId) {
+      res = http.get(`${RETAIL_URL}/orders/${lastOrderId}`, tag('retail', 'read'));
+      expected = 200;
+    } else {
+      res = http.get(`${RETAIL_URL}/orders/${ORDER_MISSING}`, tag('retail', 'read'));
+      expected = 404;
+    }
+    outcome = 'read';
+  }
+
+  check(res, { [`retail:${outcome} status ${expected}`]: (r) => r.status === expected });
   sleep(0.3 + Math.random() * 0.5);
 }

@@ -64,6 +64,16 @@ store_gateway:
 # 64 keeps them; high-cardinality labels are acceptable for this POC.
 limits:
   max_label_names_per_series: 64
+  # Prod hardening #5 (Ch.2): explicit per-tenant ingestion limits (each tenant
+  # gets these values; uniform across banking/insurance/retail). Sized far above
+  # demo load (~130 series/tenant, tens of samples/s): exceeding them returns
+  # HTTP 429 from the distributor. Finer per-tenant overrides would go in a
+  # runtime-config file (overrides: {tenant-id: {...}}); not needed for the POC.
+  ingestion_rate: 25000
+  ingestion_burst_size: 50000
+  max_global_series_per_user: 50000
+  # Prod hardening #5 (Ch.2): 7d metric retention, aligned with Loki/Tempo.
+  compactor_blocks_retention_period: 168h
 
 # No anonymous usage reporting from the POC stack.
 usage_stats:
