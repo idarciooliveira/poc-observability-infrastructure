@@ -7,6 +7,7 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 OBS="$ROOT/docker-compose.yml"
 BANK_DIR="$ROOT/custumers/digital-banking-services"
 INS_DIR="$ROOT/custumers/insurance-services"
+RETAIL_DIR="$ROOT/custumers/retail-orders-services"
 
 DOWN_FLAGS=""
 for arg in "$@"; do
@@ -28,14 +29,18 @@ get_env_value() {
 }
 BANKING_TOKEN="$(get_env_value "$ROOT/.env" BANKING_TOKEN)"
 INSURANCE_TOKEN="$(get_env_value "$ROOT/.env" INSURANCE_TOKEN)"
+RETAIL_TOKEN="$(get_env_value "$ROOT/.env" RETAIL_TOKEN)"
 GF_ADMIN_USER="$(get_env_value "$ROOT/.env" GF_ADMIN_USER)"
 GF_ADMIN_PASSWORD="$(get_env_value "$ROOT/.env" GF_ADMIN_PASSWORD)"
 [ -z "${BANKING_TOKEN:-}" ] && BANKING_TOKEN="placeholder-for-down"
 [ -z "${INSURANCE_TOKEN:-}" ] && INSURANCE_TOKEN="placeholder-for-down"
+[ -z "${RETAIL_TOKEN:-}" ] && RETAIL_TOKEN="placeholder-for-down"
 [ -z "${GF_ADMIN_USER:-}" ] && GF_ADMIN_USER="placeholder-for-down"
 [ -z "${GF_ADMIN_PASSWORD:-}" ] && GF_ADMIN_PASSWORD="placeholder-for-down"
-export BANKING_TOKEN INSURANCE_TOKEN GF_ADMIN_USER GF_ADMIN_PASSWORD
+export BANKING_TOKEN INSURANCE_TOKEN RETAIL_TOKEN GF_ADMIN_USER GF_ADMIN_PASSWORD
 
+# shellcheck disable=SC2086
+docker compose -f "$RETAIL_DIR/docker-compose.yml" down $DOWN_FLAGS
 # shellcheck disable=SC2086
 docker compose -f "$INS_DIR/docker-compose.yml" down $DOWN_FLAGS
 # shellcheck disable=SC2086

@@ -59,6 +59,8 @@ services:
           - banking-http-otlp.localhost
           - insurance-otlp.localhost
           - insurance-http-otlp.localhost
+          - retail-otlp.localhost
+          - retail-http-otlp.localhost
           - grafana.localhost
       observability-internal: {}
     depends_on:
@@ -190,6 +192,7 @@ services:
       # Fallbacks are dev-only placeholders for local bring-up.
       BANKING_TOKEN: ${BANKING_TOKEN:?BANKING_TOKEN must be set}
       INSURANCE_TOKEN: ${INSURANCE_TOKEN:?INSURANCE_TOKEN must be set}
+      RETAIL_TOKEN: ${RETAIL_TOKEN:?RETAIL_TOKEN must be set}
     networks:
       - observability-internal
     # Routes are static in observability/traefik/dynamic/routes.yml (file provider).

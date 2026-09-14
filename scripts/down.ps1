@@ -9,6 +9,7 @@ $Root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $Obs = Join-Path $Root "docker-compose.yml"
 $BankDir = Join-Path $Root "custumers\digital-banking-services"
 $InsDir = Join-Path $Root "custumers\insurance-services"
+$RetailDir = Join-Path $Root "custumers\retail-orders-services"
 
 function Get-EnvValue($File, $Key) {
   $line = Select-String -LiteralPath $File -Pattern "^\s*(export\s+)?$Key=" -ErrorAction SilentlyContinue |
@@ -24,10 +25,12 @@ function Get-EnvValue($File, $Key) {
 $RootEnv = Join-Path $Root ".env"
 $env:BANKING_TOKEN = Get-EnvValue $RootEnv "BANKING_TOKEN"
 $env:INSURANCE_TOKEN = Get-EnvValue $RootEnv "INSURANCE_TOKEN"
+$env:RETAIL_TOKEN = Get-EnvValue $RootEnv "RETAIL_TOKEN"
 $env:GF_ADMIN_USER = Get-EnvValue $RootEnv "GF_ADMIN_USER"
 $env:GF_ADMIN_PASSWORD = Get-EnvValue $RootEnv "GF_ADMIN_PASSWORD"
 if ([string]::IsNullOrWhiteSpace($env:BANKING_TOKEN)) { $env:BANKING_TOKEN = "placeholder-for-down" }
 if ([string]::IsNullOrWhiteSpace($env:INSURANCE_TOKEN)) { $env:INSURANCE_TOKEN = "placeholder-for-down" }
+if ([string]::IsNullOrWhiteSpace($env:RETAIL_TOKEN)) { $env:RETAIL_TOKEN = "placeholder-for-down" }
 if ([string]::IsNullOrWhiteSpace($env:GF_ADMIN_USER)) { $env:GF_ADMIN_USER = "placeholder-for-down" }
 if ([string]::IsNullOrWhiteSpace($env:GF_ADMIN_PASSWORD)) { $env:GF_ADMIN_PASSWORD = "placeholder-for-down" }
 
@@ -39,6 +42,7 @@ function Invoke-ComposeDown($ComposeFile) {
   & docker @composeArgs
 }
 
+Invoke-ComposeDown (Join-Path $RetailDir "docker-compose.yml")
 Invoke-ComposeDown (Join-Path $InsDir "docker-compose.yml")
 Invoke-ComposeDown (Join-Path $BankDir "docker-compose.yml")
 Invoke-ComposeDown $Obs

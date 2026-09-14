@@ -29,6 +29,13 @@ receivers:
         endpoint: "0.0.0.0:4320"
       http:
         endpoint: "0.0.0.0:4321"
+  # Retail lane (Ch.2) — fed ONLY by gateway otlp/retail (internal network).
+  otlp/retail:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4322"
+      http:
+        endpoint: "0.0.0.0:4323"
 
 processors:
   memory_limiter:
@@ -106,6 +113,21 @@ exporters:
       max_interval: 30s
       max_elapsed_time: 300s
 
+  otlp/tempo_retail:
+    endpoint: "tempo:4317"
+    tls:
+      insecure: true
+    headers:
+      X-Scope-OrgID: retail-client
+    sending_queue:
+      enabled: true
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+
   otlphttp/loki_banking:
     endpoint: "http://loki:3100/otlp/"
     headers:
@@ -132,6 +154,19 @@ exporters:
       max_interval: 30s
       max_elapsed_time: 300s
 
+  otlphttp/loki_retail:
+    endpoint: "http://loki:3100/otlp/"
+    headers:
+      X-Scope-OrgID: retail-client
+    sending_queue:
+      enabled: true
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+
   prometheusremotewrite/mimir_banking:
     endpoint: "http://mimir:9009/api/v1/push"
     headers:
@@ -143,6 +178,13 @@ exporters:
     endpoint: "http://mimir:9009/api/v1/push"
     headers:
       X-Scope-OrgID: insurance-client
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  prometheusremotewrite/mimir_retail:
+    endpoint: "http://mimir:9009/api/v1/push"
+    headers:
+      X-Scope-OrgID: retail-client
     resource_to_telemetry_conversion:
       enabled: true
 
@@ -177,3 +219,15 @@ service:
       receivers: [otlp/insurance]
       processors: [memory_limiter, resource, transform, filter, batch]
       exporters: [otlphttp/loki_insurance]
+    traces/retail:
+      receivers: [otlp/retail]
+      processors: [memory_limiter, resource, transform, filter, batch]
+      exporters: [otlp/tempo_retail]
+    metrics/retail:
+      receivers: [otlp/retail]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheusremotewrite/mimir_retail]
+    logs/retail:
+      receivers: [otlp/retail]
+      processors: [memory_limiter, resource, transform, filter, batch]
+      exporters: [otlphttp/loki_retail]

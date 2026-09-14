@@ -4,7 +4,7 @@
 #
 # Prod hardening #1: backends now enforce X-Scope-OrgID (Loki auth_enabled,
 # Mimir/Tempo multitenancy). Operator datasources (loki_ds/tempo_ds/mimir_ds)
-# use federated "banking-client|insurance-client" so existing dashboards keep
+# use federated "banking-client|insurance-client|retail-client" so existing dashboards keep
 # working; per-tenant datasources prove storage isolation (query banking from
 # the insurance datasource -> empty).
 apiVersion: 1
@@ -29,7 +29,7 @@ datasources:
           urlDisplayLabel: ''
       pdcInjected: false
     secureJsonData:
-      httpHeaderValue1: banking-client|insurance-client
+      httpHeaderValue1: banking-client|insurance-client|retail-client
 
   - name: Tempo
     uid: tempo_ds
@@ -47,7 +47,7 @@ datasources:
         filterByTraceID: false
         query: '{service_name=~".+"} | trace_id = `${__span.traceId}`'
     secureJsonData:
-      httpHeaderValue1: banking-client|insurance-client
+      httpHeaderValue1: banking-client|insurance-client|retail-client
 
   - name: Mimir
     uid: mimir_ds
@@ -59,7 +59,7 @@ datasources:
       httpHeaderName1: X-Scope-OrgID
       pdcInjected: false
     secureJsonData:
-      httpHeaderValue1: banking-client|insurance-client
+      httpHeaderValue1: banking-client|insurance-client|retail-client
 
   # ---- Per-tenant (isolation proof, use in Explore) ----
   - name: Loki-banking
@@ -121,3 +121,34 @@ datasources:
       httpHeaderName1: X-Scope-OrgID
     secureJsonData:
       httpHeaderValue1: insurance-client
+
+  # ---- Per-tenant retail (Ch.2 client-collector lane) ----
+  - name: Loki-retail
+    uid: loki_retail_ds
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      httpHeaderName1: X-Scope-OrgID
+    secureJsonData:
+      httpHeaderValue1: retail-client
+
+  - name: Tempo-retail
+    uid: tempo_retail_ds
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      httpHeaderName1: X-Scope-OrgID
+    secureJsonData:
+      httpHeaderValue1: retail-client
+
+  - name: Mimir-retail
+    uid: mimir_retail_ds
+    type: prometheus
+    access: proxy
+    url: http://mimir:9009/prometheus
+    jsonData:
+      httpHeaderName1: X-Scope-OrgID
+    secureJsonData:
+      httpHeaderValue1: retail-client

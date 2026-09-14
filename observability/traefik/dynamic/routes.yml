@@ -30,6 +30,20 @@ http:
       tls: {}
       middlewares: [platform-rate-limit]
       service: otlp-insurance-http
+    # Ch.2 retail lane: served ONLY by client-collector-retail-orders
+    # (direct app export must never use these hosts).
+    otlp-retail-grpc:
+      rule: Host(`retail-otlp.localhost`)
+      entryPoints: [websecure]
+      tls: {}
+      middlewares: [platform-rate-limit]
+      service: otlp-retail-grpc
+    otlp-retail-http:
+      rule: Host(`retail-http-otlp.localhost`)
+      entryPoints: [websecure]
+      tls: {}
+      middlewares: [platform-rate-limit]
+      service: otlp-retail-http
     grafana:
       rule: Host(`grafana.localhost`)
       entryPoints: [websecure]
@@ -55,6 +69,14 @@ http:
       loadBalancer:
         servers:
           - url: http://otel-gateway:4321
+    otlp-retail-grpc:
+      loadBalancer:
+        servers:
+          - url: h2c://otel-gateway:4322
+    otlp-retail-http:
+      loadBalancer:
+        servers:
+          - url: http://otel-gateway:4323
     grafana:
       loadBalancer:
         servers:

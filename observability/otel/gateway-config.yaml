@@ -4,6 +4,8 @@
 # tenant; the token decides the tenant, NOT any client-supplied attribute:
 #   banking   gRPC :4317 / HTTP :4318  -> tenant.id=banking-client
 #   insurance gRPC :4320 / HTTP :4321  -> tenant.id=insurance-client
+#   retail    gRPC :4322 / HTTP :4323  -> tenant.id=retail-client (Ch.2:
+#             served ONLY via client-collector-retail-orders -> Traefik)
 #
 # transform/<tenant> uses `set` (upsert): a spoofed tenant.id from the client
 # is OVERWRITTEN server-side, never trusted. The internal collector keeps only
@@ -19,6 +21,10 @@ extensions:
     token: "${env:BANKING_TOKEN}"
   bearertokenauth/insurance:
     token: "${env:INSURANCE_TOKEN}"
+  bearertokenauth/retail:
+    # Validates `Authorization: Bearer <RETAIL_TOKEN>` (gRPC + HTTP).
+    # Held ONLY by client-collector-retail-orders, never by the app.
+    token: "${env:RETAIL_TOKEN}"
   health_check:
   zpages:
 
@@ -44,6 +50,17 @@ receivers:
         endpoint: "0.0.0.0:4321"
         auth:
           authenticator: bearertokenauth/insurance
+
+  otlp/retail:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4322"
+        auth:
+          authenticator: bearertokenauth/retail
+      http:
+        endpoint: "0.0.0.0:4323"
+        auth:
+          authenticator: bearertokenauth/retail
 
 processors:
   memory_limiter:
@@ -88,6 +105,26 @@ processors:
           - set(resource.attributes["tenant.id"], "insurance-client")
           - set(resource.attributes["service.namespace"], "insurance")
 
+  # Ch.2 retail identity: `set` overwrites any tenant.id from the app OR the
+  # customer-side collector — neither is trusted (FR-06 analogue for retail).
+  transform/retail:
+    error_mode: ignore
+    trace_statements:
+      - context: resource
+        statements:
+          - set(resource.attributes["tenant.id"], "retail-client")
+          - set(resource.attributes["service.namespace"], "retail")
+    metric_statements:
+      - context: resource
+        statements:
+          - set(resource.attributes["tenant.id"], "retail-client")
+          - set(resource.attributes["service.namespace"], "retail")
+    log_statements:
+      - context: resource
+        statements:
+          - set(resource.attributes["tenant.id"], "retail-client")
+          - set(resource.attributes["service.namespace"], "retail")
+
   batch:
     send_batch_size: 1024
     timeout: 10s
@@ -131,9 +168,21 @@ exporters:
       initial_interval: 5s
       max_interval: 30s
       max_elapsed_time: 300s
+  otlp/retail:
+    endpoint: "otel-collector:4322"
+    tls:
+      insecure: true
+    sending_queue:
+      enabled: true
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
 
 service:
-  extensions: [bearertokenauth/banking, bearertokenauth/insurance, health_check, zpages]
+  extensions: [bearertokenauth/banking, bearertokenauth/insurance, bearertokenauth/retail, health_check, zpages]
   pipelines:
     traces/banking:
       receivers: [otlp/banking]
@@ -159,3 +208,15 @@ service:
       receivers: [otlp/insurance]
       processors: [memory_limiter, transform/insurance, filter, batch]
       exporters: [otlp/insurance]
+    traces/retail:
+      receivers: [otlp/retail]
+      processors: [memory_limiter, transform/retail, filter, batch]
+      exporters: [otlp/retail]
+    metrics/retail:
+      receivers: [otlp/retail]
+      processors: [memory_limiter, transform/retail, batch]
+      exporters: [otlp/retail]
+    logs/retail:
+      receivers: [otlp/retail]
+      processors: [memory_limiter, transform/retail, filter, batch]
+      exporters: [otlp/retail]

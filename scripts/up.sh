@@ -1,5 +1,5 @@
 #!/bin/sh
-# Start the full POC: observability + banking + insurance.
+# Start the full POC: observability + banking + insurance + retail-orders.
 # Fresh-clone safe: bootstraps missing .env files from .env.example and
 # exports the root tokens so all three stacks always agree (FR-06).
 # Usage: ./scripts/up.sh [--build] [--no-build]
@@ -9,6 +9,7 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 OBS="$ROOT/docker-compose.yml"
 BANK_DIR="$ROOT/custumers/digital-banking-services"
 INS_DIR="$ROOT/custumers/insurance-services"
+RETAIL_DIR="$ROOT/custumers/retail-orders-services"
 
 BUILD="--build"
 for arg in "$@"; do
@@ -37,6 +38,7 @@ copy_if_missing() {
 copy_if_missing "$ROOT/.env.example" "$ROOT/.env"
 copy_if_missing "$BANK_DIR/.env.example" "$BANK_DIR/.env"
 copy_if_missing "$INS_DIR/.env.example" "$INS_DIR/.env"
+copy_if_missing "$RETAIL_DIR/.env.example" "$RETAIL_DIR/.env"
 
 # 2. Single source of truth: tokens come from the ROOT .env.
 #    Exported shell vars win over each client dir's own .env during
@@ -50,12 +52,13 @@ get_env_value() {
 }
 BANKING_TOKEN="$(get_env_value "$ROOT/.env" BANKING_TOKEN)"
 INSURANCE_TOKEN="$(get_env_value "$ROOT/.env" INSURANCE_TOKEN)"
-if [ -z "${BANKING_TOKEN:-}" ] || [ -z "${INSURANCE_TOKEN:-}" ]; then
-  echo "ERROR: BANKING_TOKEN / INSURANCE_TOKEN missing in $ROOT/.env" >&2
-  echo "Copy .env.example to .env and set both tokens." >&2
+RETAIL_TOKEN="$(get_env_value "$ROOT/.env" RETAIL_TOKEN)"
+if [ -z "${BANKING_TOKEN:-}" ] || [ -z "${INSURANCE_TOKEN:-}" ] || [ -z "${RETAIL_TOKEN:-}" ]; then
+  echo "ERROR: BANKING_TOKEN / INSURANCE_TOKEN / RETAIL_TOKEN missing in $ROOT/.env" >&2
+  echo "Copy .env.example to .env and set all three tokens." >&2
   exit 1
 fi
-export BANKING_TOKEN INSURANCE_TOKEN
+export BANKING_TOKEN INSURANCE_TOKEN RETAIL_TOKEN
 # Prod hardening #4: Grafana admin comes from the same root .env (fail closed).
 GF_ADMIN_USER="$(get_env_value "$ROOT/.env" GF_ADMIN_USER)"
 GF_ADMIN_PASSWORD="$(get_env_value "$ROOT/.env" GF_ADMIN_PASSWORD)"
@@ -73,12 +76,12 @@ if [ ! -f "$CERT_DIR/edge.crt" ] || [ ! -f "$CERT_DIR/edge.key" ]; then
   mkdir -p "$CERT_DIR"
   openssl req -x509 -newkey rsa:2048 -keyout "$CERT_DIR/edge.key" -out "$CERT_DIR/edge.crt" \
     -days 365 -nodes -subj "/CN=localhost" \
-    -addext "subjectAltName=DNS:localhost,DNS:*.localhost,DNS:banking-otlp.localhost,DNS:banking-http-otlp.localhost,DNS:insurance-otlp.localhost,DNS:insurance-http-otlp.localhost,DNS:grafana.localhost,DNS:traefik"
+    -addext "subjectAltName=DNS:localhost,DNS:*.localhost,DNS:banking-otlp.localhost,DNS:banking-http-otlp.localhost,DNS:insurance-otlp.localhost,DNS:insurance-http-otlp.localhost,DNS:retail-otlp.localhost,DNS:retail-http-otlp.localhost,DNS:grafana.localhost,DNS:traefik"
   cp "$CERT_DIR/edge.crt" "$CERT_DIR/ca.crt"
 fi
 
 # 2c. Host DNS: *.localhost must resolve to 127.0.0.1 for browser/k6.
-for h in grafana.localhost banking-otlp.localhost insurance-otlp.localhost; do
+for h in grafana.localhost banking-otlp.localhost insurance-otlp.localhost retail-otlp.localhost; do
   if ! python3 -c "import socket; socket.gethostbyname('$h')" 2>/dev/null; then
     echo "WARNING: $h does not resolve — add '127.0.0.1 $h' to /etc/hosts (or C:\\Windows\\System32\\drivers\\etc\\hosts)" >&2
   fi
@@ -99,6 +102,8 @@ echo "== banking =="
 docker compose -f "$BANK_DIR/docker-compose.yml" up -d $BUILD
 echo "== insurance =="
 docker compose -f "$INS_DIR/docker-compose.yml" up -d $BUILD
+echo "== retail-orders =="
+docker compose -f "$RETAIL_DIR/docker-compose.yml" up -d $BUILD
 
 # 4. Wait for the public surface (gateway is distroless: no healthcheck,
 #    so poll TCP from the host instead).
@@ -115,7 +120,7 @@ wait_tcp() {
   return 1
 }
 if command -v python3 >/dev/null 2>&1; then
-  for p in 443 8080 8083; do
+  for p in 443 8080 8083 8084; do
     if wait_tcp 127.0.0.1 "$p" 30; then
       echo "ok 127.0.0.1:$p"
     else
@@ -135,7 +140,9 @@ All stacks started:
   Fraud svc     http://localhost:8081
   Insurance API http://localhost:8083  (container :8080)
   Risk svc      http://localhost:8082
+  Retail API    http://localhost:8084  (container :8080, via client-collector-retail-orders)
   OTLP edge     https://banking-otlp.localhost and https://insurance-otlp.localhost
+                https://retail-otlp.localhost (client collector only)
 
 Useful:
   ./scripts/down.sh                 # stop everything
