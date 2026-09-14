@@ -1,5 +1,5 @@
 # Grafana dashboard provider — Phase 8 (FR-12).
-# Ships tenant-overview, banking, insurance, infrastructure boards as JSON
+# Ships tenant-overview, banking, insurance, retail and infrastructure boards as JSON
 # in this directory; auto-reloaded every 10s, UI edits allowed.
 apiVersion: 1
 

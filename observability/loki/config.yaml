@@ -3,7 +3,7 @@
 # Prod hardening #1: true storage isolation via auth_enabled: true.
 # Every push/query must carry X-Scope-OrgID (banking-client | insurance-client).
 # The collector sets it per-tenant (see collector-config.yaml); Grafana
-# operator datasources use the federated value "banking-client|insurance-client"
+# operator datasources use the federated value "banking-client|insurance-client|retail-client"
 # (requires multi_tenant_queries_enabled below), per-tenant datasources use a
 # single ID to prove isolation. NOTE: pre-existing data written under
 # auth_enabled:false lives under tenant "fake" and becomes invisible — reset
@@ -40,7 +40,7 @@ schema_config:
         period: 24h
 
 querier:
-  # Operator (Grafana) can query banking-client|insurance-client in one call.
+  # Operator (Grafana) can query banking-client|insurance-client|retail-client in one call.
   # Push (/otlp) still requires a SINGLE tenant — federation is query-only.
   multi_tenant_queries_enabled: true
 

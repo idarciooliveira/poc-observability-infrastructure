@@ -10,7 +10,7 @@
 apiVersion: 1
 
 datasources:
-  # ---- Operator (federated, sees both tenants) ----
+  # ---- Operator (federated, sees all tenants) ----
   - name: Loki
     uid: loki_ds
     type: loki

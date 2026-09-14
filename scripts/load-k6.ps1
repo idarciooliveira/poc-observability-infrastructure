@@ -75,13 +75,15 @@ function Get-EnvValue($File, $Key) {
 }
 
 # Single source of truth (mirrors up.ps1): chaos `compose up -d` recreates
-# fraud/risk-service, so the root tokens must be exported or compose falls
-# back to dir-.env placeholders and the gateway rejects their telemetry.
+# fraud/risk-service and retail-api, so the root tokens must be exported or
+# compose falls back to dir-.env placeholders and the gateway rejects
+# their telemetry (retail collector forwards with RETAIL_TOKEN).
 $RootEnv = Join-Path $Root ".env"
 $env:BANKING_TOKEN = Get-EnvValue $RootEnv "BANKING_TOKEN"
 $env:INSURANCE_TOKEN = Get-EnvValue $RootEnv "INSURANCE_TOKEN"
-if ([string]::IsNullOrWhiteSpace($env:BANKING_TOKEN) -or [string]::IsNullOrWhiteSpace($env:INSURANCE_TOKEN)) {
-  throw "BANKING_TOKEN / INSURANCE_TOKEN missing in $RootEnv. Copy .env.example to .env and set both tokens."
+$env:RETAIL_TOKEN = Get-EnvValue $RootEnv "RETAIL_TOKEN"
+if ([string]::IsNullOrWhiteSpace($env:BANKING_TOKEN) -or [string]::IsNullOrWhiteSpace($env:INSURANCE_TOKEN) -or [string]::IsNullOrWhiteSpace($env:RETAIL_TOKEN)) {
+  throw "BANKING_TOKEN / INSURANCE_TOKEN / RETAIL_TOKEN missing in $RootEnv. Copy .env.example to .env and set all three tokens."
 }
 
 function Wait-Tcp($Port, $Tries = 30) {

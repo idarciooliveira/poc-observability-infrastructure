@@ -11,9 +11,9 @@
 # is OVERWRITTEN server-side, never trusted. The internal collector keeps only
 # `insert` defaults, so it cannot mask a gateway labeling bug.
 #
-# Tokens come from container env (BANKING_TOKEN / INSURANCE_TOKEN, see root
-# .env.example). Real values are never committed; compose supplies dev-only
-# fallbacks for local bring-up.
+# Tokens come from container env (BANKING_TOKEN / INSURANCE_TOKEN /
+# RETAIL_TOKEN, see root .env.example). Real values are never committed;
+# compose fails closed when they are absent (no dev fallbacks).
 
 extensions:
   bearertokenauth/banking:

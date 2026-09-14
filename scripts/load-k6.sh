@@ -77,8 +77,9 @@ if [ ! -f "$LOAD_DIR/poc-load.js" ]; then
 fi
 
 # Single source of truth (mirrors up.sh): chaos `compose up -d` recreates
-# fraud/risk-service, so the root tokens must be exported or compose falls
-# back to dir-.env placeholders and the gateway rejects their telemetry.
+# fraud/risk-service and retail-api, so the root tokens must be exported or
+# compose falls back to dir-.env placeholders and the gateway rejects
+# their telemetry (retail collector forwards with RETAIL_TOKEN).
 get_env_value() {
   # $1 = file, $2 = key — handles `KEY=value`, `export KEY=value`, quotes, CR.
   # (uses sed -n '$p' instead of tail: same result, one less dependency)
@@ -88,12 +89,13 @@ get_env_value() {
 }
 BANKING_TOKEN="$(get_env_value "$ROOT/.env" BANKING_TOKEN)"
 INSURANCE_TOKEN="$(get_env_value "$ROOT/.env" INSURANCE_TOKEN)"
-if [ -z "${BANKING_TOKEN:-}" ] || [ -z "${INSURANCE_TOKEN:-}" ]; then
-  echo "ERROR: BANKING_TOKEN / INSURANCE_TOKEN missing in $ROOT/.env" >&2
-  echo "Copy .env.example to .env and set both tokens." >&2
+RETAIL_TOKEN="$(get_env_value "$ROOT/.env" RETAIL_TOKEN)"
+if [ -z "${BANKING_TOKEN:-}" ] || [ -z "${INSURANCE_TOKEN:-}" ] || [ -z "${RETAIL_TOKEN:-}" ]; then
+  echo "ERROR: BANKING_TOKEN / INSURANCE_TOKEN / RETAIL_TOKEN missing in $ROOT/.env" >&2
+  echo "Copy .env.example to .env and set all three tokens." >&2
   exit 1
 fi
-export BANKING_TOKEN INSURANCE_TOKEN
+export BANKING_TOKEN INSURANCE_TOKEN RETAIL_TOKEN
 
 wait_tcp() {
   host="$1"; port="$2"; tries="${3:-5}"

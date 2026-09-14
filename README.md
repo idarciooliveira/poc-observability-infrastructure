@@ -2,10 +2,11 @@
 
 A proof of concept for a centralized, multi-tenant observability platform for financial-services applications.
 
-The project simulates two independent client organizations:
+The project simulates three independent client organizations:
 
-- **Client A:** Banking
-- **Client B:** Insurance
+- **Client A:** Banking (direct OTLP export to the platform)
+- **Client B:** Insurance (direct OTLP export to the platform)
+- **Client C:** Retail orders (OTLP to a customer-side collector, which forwards to the platform — Ch.2)
 
 Each client runs its own Spring Boot services inside an isolated Docker network. Applications send telemetry through OpenTelemetry to a shared OTLP endpoint exposed by the centralized observability infrastructure.
 
@@ -33,13 +34,13 @@ Prerequisites: Docker (Desktop on Windows/macOS, or Engine on Linux) with `docke
 ./scripts/up.sh
 ```
 
-This starts all three stacks in order (observability → banking → insurance),
+This starts all four stacks in order (observability → banking → insurance → retail-orders),
 creating missing `.env` files from `.env.example` on first run. The root
-`.env` is the single source of truth for `BANKING_TOKEN`/`INSURANCE_TOKEN` —
+`.env` is the single source of truth for `BANKING_TOKEN`/`INSURANCE_TOKEN`/`RETAIL_TOKEN` —
 the scripts export them so gateway and clients always agree (FR-06).
 
 Endpoints: Grafana https://grafana.localhost (served through Traefik; its local certificate may require browser approval; creds from root `.env`: `GF_ADMIN_USER`/`GF_ADMIN_PASSWORD`), Banking API
-http://localhost:8080, Insurance API http://localhost:8083.
+http://localhost:8080, Insurance API http://localhost:8083, Retail API http://localhost:8084.
 
 ```powershell
 .\scripts\down.ps1          # stop everything (add -Volumes to drop data)
@@ -70,7 +71,7 @@ http://localhost:8080, Insurance API http://localhost:8083.
 
 ```powershell
 .\scripts\load-k6.ps1 -DurationMin 1 -Vus 2                 # quick smoke test (~2.5 min)
-.\scripts\load-k6.ps1 -DurationMin 5 -Vus 10                # default: ~8-10k requests, both tenants
+.\scripts\load-k6.ps1 -DurationMin 5 -Vus 10                # default load across all three tenants
 .\scripts\load-k6.ps1 -DurationMin 5 -Vus 10 -Chaos latency # 2.5s downstream delay (trips 2s timeout)
 .\scripts\load-k6.ps1 -DurationMin 5 -Vus 10 -Chaos rejects # 30% forced fraud/risk rejections
 # Git Bash: ./scripts/load-k6.sh --duration-min 1 --vus 2 [--chaos off|latency|rejects]
@@ -81,68 +82,70 @@ http://localhost:8080, Insurance API http://localhost:8083.
 
 ```text
                                INTERNET
-                                  |
-                                  |
-                          Public OTLP Endpoint
-                               :4317/:4318
-                                  |
-                                  v
-                        +---------------------+
-                        |   OTEL GATEWAY      |
-                        |                     |
-                        | Authentication      |
-                        | Tenant identification|
-                        | Telemetry routing   |
-                        +----------+----------+
-                                  |
-                                  |
-                          PRIVATE NETWORK
-                                  |
-                                  v
-                        +---------------------+
-                        |  OTEL COLLECTOR     |
-                        +----------+----------+
-                                  |
-                   +--------------+--------------+
-                   |              |              |
-                   v              v              v
-                +------+       +------+       +------+
-                | Loki |       |Tempo |       |Mimir |
-                | Logs |       |Traces|       |Metric|
-                +------+       +------+       +------+
-                   |              |              |
-                   +--------------+--------------+
-                                  |
-                                  v
-                             +-----------+
-                             |  Grafana  |
-                             +-----------+
+                                   |
+                                   |
+                     Public OTLP Endpoint (Traefik :443,
+                          per-tenant SNI routing)
+                                   |
+                                   v
+                         +---------------------+
+                         |   OTEL GATEWAY      |
+                         |                     |
+                         | Authentication      |
+                         | Tenant identification|
+                         | Telemetry routing   |
+                         +----------+----------+
+                                   |
+                                   |
+                           PRIVATE NETWORK
+                                   |
+                                   v
+                         +---------------------+
+                         |  OTEL COLLECTOR     |
+                         +----------+----------+
+                                   |
+                    +--------------+--------------+
+                    |              |              |
+                    v              v              v
+                 +------+       +------+       +------+
+                 | Loki |       |Tempo |       |Mimir |
+                 | Logs |       |Traces|       |Metric|
+                 +------+       +------+       +------+
+                    |              |              |
+                    +--------------+--------------+
+                                   |
+                                   v
+                              +-----------+
+                              |  Grafana  |
+                              +-----------+
 
 
-        CLIENT A                                      CLIENT B
-         BANKING                                      INSURANCE
+        CLIENT A                       CLIENT B                       CLIENT C
+         BANKING                       INSURANCE                   RETAIL ORDERS
 
- +-------------------------+              +-------------------------+
- | client-banking-network  |              | client-insurance-network|
- |                         |              |                         |
- | +-------------------+   |              | +-------------------+   |
- | | Banking API       |   |              | | Insurance API     |   |
- | | Spring Boot       |   |              | | Spring Boot       |   |
- | +--------+----------+   |              | +--------+----------+   |
- |          |              |              |          |              |
- | +--------v----------+   |              | +--------v----------+   |
- | | Fraud Service     |   |              | | Risk Service      |   |
- | +--------+----------+   |              | +--------+----------+   |
- |          |              |              |          |              |
- | +--------v----------+   |              | +--------v----------+   |
- | | PostgreSQL        |   |              | | PostgreSQL        |   |
- | +-------------------+   |              | +-------------------+   |
- +-------------+-----------+              +-------------+-----------+
-               |                                        |
-               +---------------- OTLP -------------------+
-                                  |
-                                  v
-                           PUBLIC OTEL ENDPOINT
+ +-------------------------+  +-------------------------+  +-------------------------+
+ | client-banking-network  |  | client-insurance-network|  | client-retail-orders    |
+ |                         |  |                         |  |                         |
+ | +-------------------+   |  | +-------------------+   |  | +-------------------+   |
+ | | Banking API       |   |  | | Insurance API     |   |  | | Retail API        |   |
+ | | Spring Boot       |   |  | | Spring Boot       |   |  | | Spring Boot       |   |
+ | +--------+----------+   |  | +--------+----------+   |  | +--------+----------+   |
+ |          |              |  |          |              |  |          | (OTLP, no   |
+ | +--------v----------+   |  | +--------v----------+   |  |          |  auth, LAN  |
+ | | Fraud Service     |   |  | | Risk Service      |   |  | +--------v----------+   |
+ | +--------+----------+   |  | +--------+----------+   |  | | client-collector  |   |
+ |          |              |  |          |              |  | | retail-orders     |   |
+ | +--------v----------+   |  | +--------v----------+   |  | +--------+----------+   |
+ | | PostgreSQL        |   |  | | PostgreSQL        |   |  |          | (OTLP+TLS+  |
+ | +-------------------+   |  | +-------------------+   |  | | PostgreSQL        |   |
+ +-------------------------+  +-------------------------+  +-------------------------+
+          |                             |                             |
+          +------------- direct OTLP via Traefik :443 ----------------+
+                                        |
+                        retail via local collector -> Traefik :443
+                                        |
+                                        v
+                              PUBLIC OTEL ENDPOINT (Traefik :443)
 ```
 
 ### Network boundary
@@ -150,20 +153,31 @@ http://localhost:8080, Insurance API http://localhost:8083.
 Clients communicate with the telemetry ingestion endpoint only.
 
 ```text
-Client A  -----> OTLP Gateway
-Client B  -----> OTLP Gateway
+Client A  -----> OTLP Gateway (direct, via Traefik :443)
+Client B  -----> OTLP Gateway (direct, via Traefik :443)
+Client C  -----> OTLP Gateway (via client-collector-retail-orders, Traefik :443)
 
 Client A  -X-> Client B
+Client A  -X-> Client C
 Client A  -X-> Loki
 Client A  -X-> Tempo
 Client A  -X-> Mimir
 Client A  -X-> Grafana
 
 Client B  -X-> Client A
+Client B  -X-> Client C
 Client B  -X-> Loki
 Client B  -X-> Tempo
 Client B  -X-> Mimir
 Client B  -X-> Grafana
+
+Client C app -X-> OTLP Gateway (only its local collector may egress)
+Client C  -X-> Client A
+Client C  -X-> Client B
+Client C  -X-> Loki
+Client C  -X-> Tempo
+Client C  -X-> Mimir
+Client C  -X-> Grafana
 ```
 
 ## Technology Stack
@@ -199,45 +213,31 @@ Client B  -X-> Grafana
 ## Repository Structure
 
 ```text
-observability-poc/
+poc-observability-infrastructure/
 │
-├── clients/
-│   │
-│   ├── banking/
-│   │   ├── banking-api/
-│   │   │   ├── src/
-│   │   │   ├── pom.xml
-│   │   │   └── Dockerfile
-│   │   │
-│   │   └── fraud-service/
-│   │       ├── src/
-│   │       ├── pom.xml
-│   │       └── Dockerfile
-│   │
-│   └── insurance/
-│       ├── insurance-api/
-│       │   ├── src/
-│       │   ├── pom.xml
-│       │   └── Dockerfile
-│       │
-│       └── risk-service/
-│           ├── src/
-│           ├── pom.xml
-│           └── Dockerfile
+├── custumers/                       # client workloads (isolated networks)
+│   ├── digital-banking-services/    # banking-api + postgres (direct OTLP export)
+│   ├── fraud-service/               # fraud check used by banking-api
+│   ├── insurance-services/          # insurance-api + postgres (direct OTLP export)
+│   ├── risk-service/                # risk evaluation used by insurance-api
+│   └── retail-orders-services/      # retail-api + client-collector-retail-orders + postgres (Ch.2)
 │
-├── observability/
+├── observability/                   # central platform (private networks)
 │   ├── otel/
-│   │   └── collector-config.yaml
-│   ├── loki/
-│   │   └── config.yaml
-│   ├── tempo/
-│   │   └── config.yaml
-│   ├── mimir/
-│   │   └── config.yaml
-│   └── grafana/
-│       └── provisioning/
+│   │   ├── gateway-config.yaml      # sole public ingestion: auth + tenant assignment
+│   │   └── collector-config.yaml    # internal fan-out with X-Scope-OrgID
+│   ├── loki/config.yaml
+│   ├── tempo/config.yaml
+│   ├── mimir/config.yaml
+│   ├── traefik/dynamic/             # edge routes (:443 SNI) + TLS
+│   └── grafana/provisioning/        # datasources (federated + per-tenant) + dashboards
 │
-├── docker-compose.yml
+├── load/poc-load.js                 # k6 banking + insurance + retail scenarios
+├── scripts/                         # up/down/load-k6 (.sh + .ps1) + collection/
+├── tests/                           # tenant-isolation, collector-failure, security suites
+│
+├── docker-compose.yml               # platform stack
+├── PRD.md
 └── README.md
 ```
 
@@ -334,6 +334,31 @@ ClaimService
 PostgreSQL
 ```
 
+### Retail orders (Ch.2)
+
+The retail client represents a small order-processing business. Unlike banking
+and insurance, the app exports telemetry only to its local
+`client-collector-retail-orders`, which buffers (file-backed queue) and
+forwards via Traefik to the central gateway.
+
+Services:
+
+```text
+Retail API
+     |
+     +---- client-collector-retail-orders (OTLP egress, early PII scrub)
+     |
+     +---- PostgreSQL
+```
+
+Main business operations:
+
+```text
+POST /orders
+GET /orders/{id}
+POST /orders/{id}/cancel
+```
+
 ## Observability Model
 
 Applications use the OpenTelemetry Java Agent for automatic instrumentation. Manual instrumentation is added around important business operations.
@@ -377,6 +402,16 @@ insurance.risk.evaluation.duration
 insurance.high_risk_claims
 ```
 
+Retail examples:
+
+```text
+retail.orders.created
+retail.orders.cancelled
+retail.orders.failed
+retail.order.value
+retail.order.processing.duration
+```
+
 ### Business traces
 
 Banking:
@@ -408,6 +443,7 @@ Every telemetry record must be associated with a client.
 ```text
 tenant.id = banking-client
 tenant.id = insurance-client
+tenant.id = retail-client
 ```
 
 Each client uses its own authentication credential:
@@ -415,6 +451,7 @@ Each client uses its own authentication credential:
 ```text
 BANKING_TOKEN
 INSURANCE_TOKEN
+RETAIL_TOKEN
 ```
 
 The gateway maps credentials to tenants and prevents a client from arbitrarily changing its tenant identity.
@@ -422,7 +459,7 @@ The gateway maps credentials to tenants and prevents a client from arbitrarily c
 The platform must preserve the distinction:
 
 ```text
-BANKING telemetry ≠ INSURANCE telemetry
+BANKING telemetry ≠ INSURANCE telemetry ≠ RETAIL telemetry
 ```
 
 while processing both through the same centralized infrastructure.
@@ -456,6 +493,13 @@ Dashboards should cover:
 - Claim failures
 - Risk rejection rate
 - Claim processing latency
+
+### Retail (Ch.2)
+
+- Order rate (created / cancelled / failed)
+- Cancel ratio
+- Order processing latency
+- Order value
 
 ### Tenant overview
 

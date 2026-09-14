@@ -10,11 +10,16 @@ info:
     - fraud-service  -> http://localhost:8081  (POST /fraud-check, internal)
     - insurance-api  -> http://localhost:8083  (container 8080; POST /policies/{id}/claims)
     - risk-service   -> http://localhost:8082  (POST /risk-check, internal)
-    - grafana        -> http://localhost:3000  (admin/admin)
-    - OTLP/HTTP banking   -> http://localhost:4318 (/v1/traces|metrics|logs)
-    - OTLP/HTTP insurance -> http://localhost:4321 (/v1/traces|metrics|logs)
-    - OTLP/gRPC banking   -> http://localhost:4317 (gRPC, not plain HTTP)
-    - OTLP/gRPC insurance -> http://localhost:4320 (gRPC, not plain HTTP)
+    - retail-api     -> http://localhost:8084  (container 8080; POST /orders, GET /orders/{id}, POST /orders/{id}/cancel)
+    - grafana        -> https://grafana.localhost (Traefik TLS; creds from root .env)
+    - OTLP/HTTP banking   -> https://banking-http-otlp.localhost (/v1/traces|metrics|logs, Bearer BANKING_TOKEN)
+    - OTLP/HTTP insurance -> https://insurance-http-otlp.localhost (/v1/traces|metrics|logs, Bearer INSURANCE_TOKEN)
+    - OTLP/HTTP retail    -> https://retail-http-otlp.localhost (/v1/traces|metrics|logs, Bearer RETAIL_TOKEN; client-collector only)
+    - OTLP/gRPC banking   -> https://banking-otlp.localhost (gRPC, not plain HTTP)
+    - OTLP/gRPC insurance -> https://insurance-otlp.localhost (gRPC, not plain HTTP)
+    - OTLP/gRPC retail    -> https://retail-otlp.localhost (gRPC, not plain HTTP; client-collector only)
+    OTLP edge is Traefik :443 with SNI Host routing; per-lane gateway ports
+    (:4317/:4318 banking, :4320/:4321 insurance, :4322/:4323 retail) have no host ports.
 
     Seed data (see */src/main/resources/data.sql):
     - Accounts: BANK-0001 (5000.00), BANK-0002 (1500.00), BANK-0003 (50000.00, for fraud-reject demo)
@@ -41,12 +46,16 @@ servers:
     description: insurance-api (container serves 8080)
   - url: http://localhost:8082
     description: risk-service (internal to client-insurance network)
-  - url: http://localhost:3000
-    description: grafana (admin/admin)
-  - url: http://localhost:4318
-    description: OTLP/HTTP gateway — banking listener
-  - url: http://localhost:4321
-    description: OTLP/HTTP gateway — insurance listener
+  - url: http://localhost:8084
+    description: retail-api (container serves 8080)
+  - url: https://grafana.localhost
+    description: grafana (Traefik TLS; creds from root .env)
+  - url: https://banking-http-otlp.localhost
+    description: OTLP/HTTP gateway — banking listener (Bearer BANKING_TOKEN)
+  - url: https://insurance-http-otlp.localhost
+    description: OTLP/HTTP gateway — insurance listener (Bearer INSURANCE_TOKEN)
+  - url: https://retail-http-otlp.localhost
+    description: OTLP/HTTP gateway — retail listener (Bearer RETAIL_TOKEN; client-collector only)
 tags:
   - name: banking
     description: digital-banking-services (banking-api :8080)
@@ -56,12 +65,14 @@ tags:
     description: insurance-services (insurance-api :8083)
   - name: risk
     description: risk-service (:8082, internal)
+  - name: retail
+    description: retail-orders-services (retail-api :8084; catalog PROD-001/002/003)
   - name: actuator
     description: Spring Boot actuator (health/info/metrics on every Java service)
   - name: grafana
-    description: Observability UI + API (:3000, admin/admin)
+    description: Observability UI + API (https://grafana.localhost, creds from root .env)
   - name: otlp-http
-    description: OTLP/HTTP ingestion via gateway (:4318 banking, :4321 insurance)
+    description: OTLP/HTTP ingestion via gateway (Traefik :443 SNI hosts; per-lane Bearer tokens)
 paths:
   # ── Banking ──────────────────────────────────────────────
   /transfers:
@@ -272,6 +283,64 @@ paths:
               schema:
                 $ref: '#/components/schemas/RiskCheckResponse'
 
+  # ── Retail (Ch.2) ──────────────────────────────────────────────
+  /orders:
+    post:
+      tags: [retail]
+      summary: Create order (retail-api :8084)
+      description: |-
+        Core business op: POST /orders -> product/qty validation -> total calc -> persist.
+        201 on success. 422 unknown product. 400 bean validation (blank productId, qty out of 1..100).
+        Catalog: PROD-001 (29.99), PROD-002 (49.99), PROD-003 (99.99).
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OrderRequest'}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OrderResponse'}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /orders/{id}:
+    get:
+      tags: [retail]
+      summary: Get order (retail-api :8084)
+      operationId: getOrder
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: Found
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OrderResponse'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /orders/{id}/cancel:
+    post:
+      tags: [retail]
+      summary: Cancel order (retail-api :8084)
+      description: |-
+        200 on success. 404 unknown id. 409 already cancelled.
+      operationId: cancelOrder
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: Cancelled
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OrderResponse'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: Already cancelled (plain-text message)
+          content:
+            text/plain:
+              schema: {type: string}
   # ── Actuator (all 4 Java services) ───────────────────────
   /actuator/health:
     get:
@@ -346,7 +415,7 @@ paths:
   /api/search:
     get:
       tags: [grafana]
-      summary: Search dashboards (:3000, basic admin/admin)
+      summary: Search dashboards (via https://grafana.localhost, basic auth from root .env)
       operationId: grafanaSearch
       parameters:
         - name: query
@@ -362,7 +431,7 @@ paths:
   /api/datasources:
     get:
       tags: [grafana]
-      summary: List datasources (:3000, basic admin/admin)
+      summary: List datasources (via https://grafana.localhost, basic auth from root .env)
       operationId: grafanaDatasources
       responses:
         '200':
@@ -373,7 +442,7 @@ paths:
   /api/dashboards/uid/{uid}:
     get:
       tags: [grafana]
-      summary: Get dashboard by uid (:3000, basic admin/admin)
+      summary: Get dashboard by uid (via https://grafana.localhost, basic auth from root .env)
       operationId: grafanaDashboard
       parameters:
         - name: uid
@@ -389,7 +458,7 @@ paths:
   /api/ds/query:
     post:
       tags: [grafana]
-      summary: Grafana datasource query API (:3000, basic admin/admin)
+      summary: Grafana datasource query API (via https://grafana.localhost, basic auth from root .env)
       description: Unified query endpoint for Loki/Tempo/Mimir via datasource uid.
       operationId: grafanaDsQuery
       requestBody:
@@ -411,7 +480,7 @@ paths:
   /api/prometheus/grafana/api/v1/query:
     get:
       tags: [grafana]
-      summary: Mimir instant query via Grafana proxy (:3000, basic admin/admin)
+      summary: Mimir instant query via Grafana proxy (via https://grafana.localhost, basic auth from root .env)
       operationId: mimirInstantQuery
       parameters:
         - name: query
@@ -430,10 +499,12 @@ paths:
   /v1/traces:
     post:
       tags: [otlp-http]
-      summary: OTLP/HTTP traces (gateway :4318 banking / :4321 insurance)
+      summary: OTLP/HTTP traces (gateway lanes banking / insurance / retail)
       description: |-
         Send OTLP/HTTP protobuf or JSON with header Authorization: Bearer <TENANT_TOKEN>.
-        Banking token -> :4318, insurance token -> :4321. Use Postman raw binary or JSON.
+        Banking token -> https://banking-http-otlp.localhost, insurance token ->
+        https://insurance-http-otlp.localhost, retail token ->
+        https://retail-http-otlp.localhost (client-collector only). Use Postman raw binary or JSON.
       operationId: otlpTraces
       requestBody:
         required: true
@@ -450,7 +521,7 @@ paths:
   /v1/metrics:
     post:
       tags: [otlp-http]
-      summary: OTLP/HTTP metrics (gateway :4318 banking / :4321 insurance)
+      summary: OTLP/HTTP metrics (gateway lanes banking / insurance / retail)
       operationId: otlpMetrics
       requestBody:
         required: true
@@ -467,7 +538,7 @@ paths:
   /v1/logs:
     post:
       tags: [otlp-http]
-      summary: OTLP/HTTP logs (gateway :4318 banking / :4321 insurance)
+      summary: OTLP/HTTP logs (gateway lanes banking / insurance / retail)
       operationId: otlpLogs
       requestBody:
         required: true
@@ -524,6 +595,21 @@ components:
         policyId: {type: string, format: uuid}
         amount: {type: number, format: double}
         status: {type: string, example: APPROVED}
+        createdAt: {type: string, format: date-time}
+    OrderRequest:
+      type: object
+      required: [productId, quantity]
+      properties:
+        productId: {type: string, example: PROD-001}
+        quantity: {type: integer, minimum: 1, maximum: 100, example: 2}
+    OrderResponse:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        productId: {type: string}
+        quantity: {type: integer}
+        total: {type: number, format: double}
+        status: {type: string, example: CREATED}
         createdAt: {type: string, format: date-time}
     FraudCheckRequest:
       type: object
